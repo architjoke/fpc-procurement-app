@@ -51,6 +51,42 @@ interface FlaggedPurchase {
   ocrJobs: Array<{ id: string; imageData: string | null }>;
 }
 
+interface ApprovedPurchase {
+  id: string;
+  grade: string;
+  netKg: number | string;
+  amountPaise: number;
+  farmer: { memberId: string; name: string };
+  crop: { name: string };
+}
+
+interface PaymentRunSummary {
+  id: string;
+  status: 'DRAFT' | 'APPROVED' | 'EXPORTED';
+  runDate: string;
+  totalAmountPaise: number;
+  _count?: { paymentItems: number };
+}
+
+interface PaymentRunDetail extends Omit<PaymentRunSummary, '_count'> {
+  paymentItems: Array<{
+    id: string;
+    status: string;
+    purchase: {
+      id: string;
+      grade: string;
+      netKg: number | string;
+      amountPaise: number;
+      status: string;
+      farmer: { memberId: string; name: string };
+      crop: { name: string };
+    };
+  }>;
+}
+
+const formatPaise = (amountPaise: number) =>
+  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(amountPaise / 100);
+
 const ManagerReview = () => {
   const [purchases, setPurchases] = useState<FlaggedPurchase[]>([]);
   const [page, setPage] = useState(1);
@@ -201,6 +237,347 @@ const ManagerReview = () => {
           </div>
         )}
       </section>
+    </main>
+  );
+};
+
+const PaymentManagement = () => {
+  const [eligiblePurchases, setEligiblePurchases] = useState<ApprovedPurchase[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [runs, setRuns] = useState<PaymentRunSummary[]>([]);
+  const [runPage, setRunPage] = useState(1);
+  const [runPages, setRunPages] = useState(1);
+  const [runDetail, setRunDetail] = useState<PaymentRunDetail | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState('');
+
+  const loadEligible = async () => {
+    try {
+      const { data } = await api.get<{ data: ApprovedPurchase[] }>('/purchases', {
+        params: { status: 'APPROVED' },
+      });
+      setEligiblePurchases(data.data);
+      setSelectedIds((current) => current.filter((id) => data.data.some((item) => item.id === id)));
+    } catch (loadError) {
+      console.error('Unable to load payment-eligible purchases:', loadError);
+      setError('Could not load approved purchases. Please retry.');
+    }
+  };
+
+  const loadRuns = async (targetPage: number) => {
+    try {
+      const { data } = await api.get<{
+        data: PaymentRunSummary[];
+        pagination: { pages: number };
+      }>('/payment-runs', { params: { page: targetPage, pageSize: 10 } });
+      setRuns(data.data);
+      setRunPages(data.pagination.pages);
+      setRunPage(targetPage);
+    } catch (loadError) {
+      console.error('Unable to load payment runs:', loadError);
+      setError('Could not load payment runs. Please retry.');
+    }
+  };
+
+  const loadDetail = async (runId: string) => {
+    try {
+      const { data } = await api.get<{ data: PaymentRunDetail }>(`/payment-runs/${runId}`);
+      setRunDetail(data.data);
+    } catch (loadError) {
+      console.error('Unable to load payment run details:', loadError);
+      setError('Could not load the payment run. Please retry.');
+    }
+  };
+
+  useEffect(() => {
+    void Promise.all([loadEligible(), loadRuns(1)]).finally(() => setLoading(false));
+  }, []);
+
+  const selectedTotal = eligiblePurchases
+    .filter((purchase) => selectedIds.includes(purchase.id))
+    .reduce((total, purchase) => total + purchase.amountPaise, 0);
+
+  const togglePurchase = (purchaseId: string) => {
+    setSelectedIds((current) =>
+      current.includes(purchaseId)
+        ? current.filter((id) => id !== purchaseId)
+        : [...current, purchaseId],
+    );
+  };
+
+  const createRun = async () => {
+    setWorking(true);
+    setError('');
+    try {
+      const { data } = await api.post<{ data: PaymentRunSummary }>('/payment-runs', {
+        purchase_ids: selectedIds,
+      });
+      setSelectedIds([]);
+      setConfirming(false);
+      await Promise.all([loadEligible(), loadRuns(1), loadDetail(data.data.id)]);
+    } catch (createError) {
+      console.error('Unable to create payment run:', createError);
+      setError('Could not create the payment run. Refresh and check purchase eligibility.');
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const approveRun = async () => {
+    if (!runDetail) return;
+    setWorking(true);
+    setError('');
+    try {
+      await api.patch(`/payment-runs/${runDetail.id}/approve`);
+      await Promise.all([loadDetail(runDetail.id), loadRuns(runPage)]);
+    } catch (approveError) {
+      console.error('Unable to approve payment run:', approveError);
+      setError('Could not approve this payment run. Please refresh and retry.');
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const exportRun = async () => {
+    if (!runDetail) return;
+    setWorking(true);
+    setError('');
+    try {
+      const { data } = await api.get<Blob>(`/payment-runs/${runDetail.id}/export`, {
+        responseType: 'blob',
+      });
+      const url = URL.createObjectURL(data);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `payment-run-${runDetail.id}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      await Promise.all([loadDetail(runDetail.id), loadRuns(runPage), loadEligible()]);
+    } catch (exportError) {
+      console.error('Unable to export payment run:', exportError);
+      setError('Could not export this payment run. Please retry.');
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return (
+    <main className="shell">
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="payment-grid">
+        <section className="card">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Payment preparation</p>
+              <h2>Approved purchases</h2>
+            </div>
+            <button
+              className="button secondary"
+              onClick={() => void loadEligible()}
+              disabled={working}
+            >
+              Refresh
+            </button>
+          </div>
+          {loading ? (
+            <p>Loading approved purchases…</p>
+          ) : eligiblePurchases.length === 0 ? (
+            <p>No approved purchases are eligible for a payment run.</p>
+          ) : (
+            <ul className="payment-purchase-list">
+              {eligiblePurchases.map((purchase) => (
+                <li key={purchase.id} className="payment-purchase">
+                  <label className="payment-purchase-choice">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(purchase.id)}
+                      onChange={() => togglePurchase(purchase.id)}
+                    />
+                    <span>
+                      <strong>
+                        {purchase.farmer.memberId} — {purchase.farmer.name}
+                      </strong>
+                      <small>
+                        {purchase.crop.name} · Grade {purchase.grade} ·{' '}
+                        {Number(purchase.netKg).toFixed(1)} kg
+                      </small>
+                    </span>
+                    <strong>{formatPaise(purchase.amountPaise)}</strong>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+          {selectedIds.length > 0 && (
+            <div className="payment-summary">
+              <p>
+                Selected: <strong>{selectedIds.length} purchases</strong> · Total:{' '}
+                <strong>{formatPaise(selectedTotal)}</strong>
+              </p>
+              <button
+                className="button primary"
+                onClick={() => setConfirming(true)}
+                disabled={working}
+              >
+                Review payment run
+              </button>
+            </div>
+          )}
+          {confirming && (
+            <div className="confirmation-panel">
+              <h3>Confirm payment run</h3>
+              <p>
+                This run includes {selectedIds.length} purchases totaling{' '}
+                <strong>{formatPaise(selectedTotal)}</strong>.
+              </p>
+              <div className="actions">
+                <button
+                  className="button secondary"
+                  onClick={() => setConfirming(false)}
+                  disabled={working}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="button primary"
+                  onClick={() => void createRun()}
+                  disabled={working}
+                >
+                  {working ? 'Creating…' : 'Confirm and create'}
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="card">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Run history</p>
+              <h2>Payment runs</h2>
+            </div>
+            <button className="button secondary" onClick={() => void loadRuns(runPage)}>
+              Refresh
+            </button>
+          </div>
+          {loading ? (
+            <p>Loading payment runs…</p>
+          ) : runs.length === 0 ? (
+            <p>No payment runs have been created.</p>
+          ) : (
+            <ul className="payment-run-list">
+              {runs.map((run) => (
+                <li key={run.id}>
+                  <button
+                    className={`payment-run-link${runDetail?.id === run.id ? ' selected' : ''}`}
+                    onClick={() => void loadDetail(run.id)}
+                  >
+                    <span>
+                      <strong>{run.id}</strong>
+                      <small>
+                        {new Date(run.runDate).toLocaleDateString()} ·{' '}
+                        {run._count?.paymentItems ?? 0} purchases
+                      </small>
+                    </span>
+                    <span>
+                      <strong>{formatPaise(run.totalAmountPaise)}</strong>
+                      <small className={`run-status ${run.status.toLowerCase()}`}>
+                        {run.status}
+                      </small>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {runPages > 1 && (
+            <div className="actions">
+              <button
+                className="button secondary"
+                disabled={runPage <= 1}
+                onClick={() => void loadRuns(runPage - 1)}
+              >
+                Previous
+              </button>
+              <span>
+                Page {runPage} of {runPages}
+              </span>
+              <button
+                className="button secondary"
+                disabled={runPage >= runPages}
+                onClick={() => void loadRuns(runPage + 1)}
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </section>
+      </div>
+
+      {runDetail && (
+        <section className="card payment-run-detail">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Payment run detail</p>
+              <h2>{runDetail.id}</h2>
+              <p>
+                {runDetail.status} · {formatPaise(runDetail.totalAmountPaise)}
+              </p>
+            </div>
+            <div className="actions">
+              {runDetail.status === 'DRAFT' && (
+                <button
+                  className="button primary"
+                  onClick={() => void approveRun()}
+                  disabled={working}
+                >
+                  Approve run
+                </button>
+              )}
+              {(runDetail.status === 'APPROVED' || runDetail.status === 'EXPORTED') && (
+                <button
+                  className="button secondary"
+                  onClick={() => void exportRun()}
+                  disabled={working}
+                >
+                  {runDetail.status === 'EXPORTED' ? 'Download CSV again' : 'Export CSV'}
+                </button>
+              )}
+            </div>
+          </div>
+          {runDetail.paymentItems.length === 0 ? (
+            <p>This payment run has no line items.</p>
+          ) : (
+            <ul className="payment-line-list">
+              {runDetail.paymentItems.map((item) => (
+                <li key={item.id}>
+                  <div>
+                    <strong>
+                      {item.purchase.farmer.memberId} — {item.purchase.farmer.name}
+                    </strong>
+                    <small>
+                      {item.purchase.crop.name} · Grade {item.purchase.grade} ·{' '}
+                      {Number(item.purchase.netKg).toFixed(1)} kg
+                    </small>
+                  </div>
+                  <strong>{formatPaise(item.purchase.amountPaise)}</strong>
+                  <span className={`run-status ${item.purchase.status.toLowerCase()}`}>
+                    {item.purchase.status}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
     </main>
   );
 };
@@ -773,7 +1150,12 @@ export default function App() {
         <Link to="/">Home</Link>
         <Link to="/login">Login</Link>
         <Link to="/purchases">Capture purchase</Link>
-        {session?.user.role === 'office_manager' && <Link to="/review">Flagged review</Link>}
+        {session?.user.role === 'office_manager' && (
+          <>
+            <Link to="/review">Flagged review</Link>
+            <Link to="/payments">Payment runs</Link>
+          </>
+        )}
         {session && (
           <button className="text-button" onClick={() => void logout()}>
             Sign out
@@ -808,6 +1190,16 @@ export default function App() {
           element={
             session?.user.role === 'office_manager' ? (
               <ManagerReview />
+            ) : (
+              <PurchaseCapture session={session} />
+            )
+          }
+        />
+        <Route
+          path="/payments"
+          element={
+            session?.user.role === 'office_manager' ? (
+              <PaymentManagement />
             ) : (
               <PurchaseCapture session={session} />
             )

@@ -34,6 +34,9 @@ The project is split into a plain Express + TypeScript backend and a Vite + Reac
 - POST /api/v1/ocr/parse
 - POST /api/v1/sync/purchases
 - POST /api/v1/payment-runs
+- GET /api/v1/payment-runs
+- GET /api/v1/payment-runs/:id
+- PATCH /api/v1/payment-runs/:id/approve
 - GET /api/v1/payment-runs/:id/export
 - GET /api/v1/sms/:purchaseId
 - GET /api/v1/dashboard/summary
@@ -61,6 +64,13 @@ older purchases without a device timestamp use their recorded creation date.
 Managers review flagged purchases with a required reason. Approval changes `FLAGGED` to
 `APPROVED`; rejection changes it to `REJECTED`. Both decisions are written to `audit_trail`.
 Flagged purchases are excluded from payment runs and do not generate SMS slips.
+
+### Payment runs
+
+Payment runs move through `DRAFT` -> `APPROVED` -> `EXPORTED`. Only approved purchases that
+are not already assigned to a run are eligible. Approval is audited; export marks the run
+`EXPORTED` and its purchases `PAID`. The downloadable CSV contains sequence number, beneficiary
+name, account number, IFSC, integer amount in paise, payment reference, and purpose code.
 
 ## OCR flow
 

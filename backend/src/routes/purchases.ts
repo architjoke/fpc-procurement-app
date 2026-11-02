@@ -98,8 +98,13 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
     });
   }
 
+  const where = {
+    ...centreScope(req.user!),
+    ...(status.data ? { status: status.data } : {}),
+    ...(status.data === 'APPROVED' ? { paymentRunItems: { none: {} } } : {}),
+  };
   const purchases = await prisma.purchase.findMany({
-    where: { ...centreScope(req.user!), ...(status.data ? { status: status.data } : {}) },
+    where,
     include: { farmer: true, centre: true, crop: true },
     orderBy: { createdAt: 'desc' },
   });

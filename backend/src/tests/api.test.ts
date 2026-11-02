@@ -34,12 +34,20 @@ const mockedPrisma = vi.hoisted(() => ({
     findMany: vi.fn(),
     findUnique: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
   },
   ocrJob: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
   smsOutbox: { create: vi.fn() },
   auditTrail: { create: vi.fn(), findFirst: vi.fn() },
   syncLog: { create: vi.fn() },
-  paymentRun: { create: vi.fn() },
+  paymentRun: {
+    count: vi.fn(),
+    create: vi.fn(),
+    findMany: vi.fn(),
+    findUnique: vi.fn(),
+    update: vi.fn(),
+    updateMany: vi.fn(),
+  },
   paymentRunItem: { create: vi.fn() },
   centre: { findMany: vi.fn() },
   $transaction: vi.fn(),
@@ -1328,11 +1336,337 @@ describe('API flows', () => {
     const response = await request(app)
       .post('/api/v1/payment-runs')
       .set(authHeaders(managerToken))
-      .send({ purchaseIds: ['purchase-flagged'] });
+      .send({ purchase_ids: ['purchase-flagged'] });
 
     expect(response.status).toBe(400);
     expect(response.body.ineligiblePurchaseIds).toEqual(['purchase-flagged']);
     expect(mockedPrisma.paymentRun.create).not.toHaveBeenCalled();
+  });
+
+  it('creates a draft payment run with approved line items and exact paise total', async () => {
+    const managerToken = jwt.sign(
+      { sub: 'mgr-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '1h' },
+    );
+    mockedPrisma.purchase.findMany.mockResolvedValue([
+      { id: 'purchase-1', status: 'APPROVED', amountPaise: 10001, paymentRunItems: [] },
+      { id: 'purchase-2', status: 'APPROVED', amountPaise: 20002, paymentRunItems: [] },
+    ]);
+    mockedPrisma.paymentRun.create.mockImplementation(({ data }) =>
+      Promise.resolve({ id: 'run-1', ...data, paymentItems: data.paymentItems.create }),
+    );
+
+    const response = await request(app)
+      .post('/api/v1/payment-runs')
+      .set(authHeaders(managerToken))
+      .send({ purchase_ids: ['purchase-1', 'purchase-2'] });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data.totalAmountPaise).toBe(30003);
+    expect(mockedPrisma.paymentRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'DRAFT',
+          totalAmountPaise: 30003,
+          paymentItems: {
+            create: [
+              { purchase: { connect: { id: 'purchase-1' } }, status: 'APPROVED' },
+              { purchase: { connect: { id: 'purchase-2' } }, status: 'APPROVED' },
+            ],
+          },
+        }),
+      }),
+    );
+  });
+
+  it('rejects mixed-status and missing purchases with an ineligible ID list', async () => {
+    const managerToken = jwt.sign(
+      { sub: 'mgr-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '1h' },
+    );
+    mockedPrisma.purchase.findMany.mockResolvedValue([
+      { id: 'purchase-flagged', status: 'FLAGGED', amountPaise: 10000, paymentRunItems: [] },
+    ]);
+
+    const response = await request(app)
+      .post('/api/v1/payment-runs')
+      .set(authHeaders(managerToken))
+      .send({ purchase_ids: ['purchase-flagged', 'purchase-missing'] });
+
+    expect(response.status).toBe(400);
+    expect(response.body.ineligiblePurchaseIds).toEqual(['purchase-flagged', 'purchase-missing']);
+    expect(mockedPrisma.paymentRun.create).not.toHaveBeenCalled();
+  });
+
+  it('does not include purchases already assigned to another run', async () => {
+    const managerToken = jwt.sign(
+      { sub: 'mgr-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '1h' },
+    );
+    mockedPrisma.purchase.findMany.mockResolvedValue([
+      {
+        id: 'purchase-in-run',
+        status: 'APPROVED',
+        amountPaise: 10000,
+        paymentRunItems: [{ id: 'existing-item' }],
+      },
+    ]);
+
+    const response = await request(app)
+      .post('/api/v1/payment-runs')
+      .set(authHeaders(managerToken))
+      .send({ purchase_ids: ['purchase-in-run'] });
+
+    expect(response.status).toBe(400);
+    expect(response.body.ineligiblePurchaseIds).toEqual(['purchase-in-run']);
+    expect(mockedPrisma.paymentRun.create).not.toHaveBeenCalled();
+  });
+
+  it('lists payment runs with status filtering and pagination', async () => {
+    const managerToken = jwt.sign(
+      { sub: 'mgr-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '1h' },
+    );
+    mockedPrisma.paymentRun.findMany.mockResolvedValue([{ id: 'run-1', status: 'APPROVED' }]);
+    mockedPrisma.paymentRun.count.mockResolvedValue(5);
+
+    const response = await request(app)
+      .get('/api/v1/payment-runs?status=APPROVED&page=2&pageSize=2')
+      .set(authHeaders(managerToken));
+
+    expect(response.status).toBe(200);
+    expect(response.body.pagination).toEqual({ page: 2, pageSize: 2, total: 5, pages: 3 });
+    expect(mockedPrisma.paymentRun.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { status: 'APPROVED' }, skip: 2, take: 2 }),
+    );
+  });
+
+  it('returns payment run line items with farmer and crop details', async () => {
+    const managerToken = jwt.sign(
+      { sub: 'mgr-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '1h' },
+    );
+    mockedPrisma.paymentRun.findUnique.mockResolvedValue({
+      id: 'run-1',
+      status: 'APPROVED',
+      paymentItems: [
+        {
+          id: 'item-1',
+          status: 'APPROVED',
+          purchase: {
+            id: 'purchase-1',
+            status: 'PAID',
+            farmer: { memberId: 'F-1001', name: 'Sunil Jadhav' },
+            crop: { name: 'Soybean' },
+          },
+        },
+      ],
+    });
+
+    const response = await request(app)
+      .get('/api/v1/payment-runs/run-1')
+      .set(authHeaders(managerToken));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.paymentItems[0]).toEqual(
+      expect.objectContaining({
+        status: 'APPROVED',
+        purchase: expect.objectContaining({
+          status: 'PAID',
+          farmer: expect.objectContaining({ name: 'Sunil Jadhav' }),
+          crop: expect.objectContaining({ name: 'Soybean' }),
+        }),
+      }),
+    );
+  });
+
+  it('approves draft payment runs and writes an audit entry', async () => {
+    const managerToken = jwt.sign(
+      { sub: 'mgr-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '1h' },
+    );
+    mockedPrisma.paymentRun.findUnique
+      .mockResolvedValueOnce({ id: 'run-1', status: 'DRAFT' })
+      .mockResolvedValueOnce({ id: 'run-1', status: 'APPROVED' });
+    mockedPrisma.paymentRun.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.auditTrail.create.mockResolvedValue({ id: 'audit-run-1' });
+
+    const response = await request(app)
+      .patch('/api/v1/payment-runs/run-1/approve')
+      .set(authHeaders(managerToken));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.status).toBe('APPROVED');
+    expect(mockedPrisma.auditTrail.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'payment_run_approve',
+          entityId: 'run-1',
+        }),
+      }),
+    );
+  });
+
+  it('exports approved runs as downloadable CSV and marks purchases paid', async () => {
+    const managerToken = jwt.sign(
+      { sub: 'mgr-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '1h' },
+    );
+    mockedPrisma.paymentRun.findUnique.mockResolvedValue({
+      id: 'run-1',
+      status: 'APPROVED',
+      paymentItems: [
+        {
+          purchaseId: 'purchase-1',
+          purchase: {
+            id: 'purchase-1',
+            amountPaise: 5975200,
+            farmer: {
+              name: 'Sunil Jadhav',
+              bankAccount: '123456789012',
+              bankIfsc: 'SBIN0001234',
+            },
+          },
+        },
+      ],
+    });
+    mockedPrisma.purchase.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.paymentRun.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.auditTrail.create.mockResolvedValue({ id: 'audit-export-1' });
+
+    const response = await request(app)
+      .get('/api/v1/payment-runs/run-1/export')
+      .set(authHeaders(managerToken));
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-disposition']).toBe(
+      'attachment; filename="payment-run-run-1.csv"',
+    );
+    expect(response.text).toBe(
+      'sequence_no,beneficiary_name,account_number,ifsc,amount_in_paise,payment_reference,purpose_code\r\n' +
+        '1,"Sunil Jadhav","123456789012","SBIN0001234",5975200,"PROC-purchase-1",AGRI_PROCUREMENT\r\n',
+    );
+    expect(mockedPrisma.purchase.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['purchase-1'] }, status: 'APPROVED' },
+      data: { status: 'PAID' },
+    });
+    expect(mockedPrisma.paymentRun.updateMany).toHaveBeenCalledWith({
+      where: { id: 'run-1', status: 'APPROVED' },
+      data: { status: 'EXPORTED' },
+    });
+  });
+
+  it('does not export a draft payment run', async () => {
+    const managerToken = jwt.sign(
+      { sub: 'mgr-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '1h' },
+    );
+    mockedPrisma.paymentRun.findUnique.mockResolvedValue({
+      id: 'run-1',
+      status: 'DRAFT',
+      paymentItems: [],
+    });
+
+    const response = await request(app)
+      .get('/api/v1/payment-runs/run-1/export')
+      .set(authHeaders(managerToken));
+
+    expect(response.status).toBe(409);
+    expect(mockedPrisma.purchase.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.paymentRun.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('creates, approves, and exports a run end to end', async () => {
+    const managerToken = jwt.sign(
+      { sub: 'mgr-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '1h' },
+    );
+    const headers = authHeaders(managerToken);
+    const purchase = {
+      id: 'purchase-e2e',
+      status: 'APPROVED',
+      amountPaise: 4030350,
+      paymentRunItems: [],
+    };
+    mockedPrisma.purchase.findMany.mockResolvedValue([purchase]);
+    mockedPrisma.paymentRun.create.mockResolvedValue({
+      id: 'run-e2e',
+      status: 'DRAFT',
+      totalAmountPaise: purchase.amountPaise,
+      paymentItems: [{ purchaseId: purchase.id, status: 'APPROVED' }],
+    });
+
+    const created = await request(app)
+      .post('/api/v1/payment-runs')
+      .set(headers)
+      .send({ purchase_ids: [purchase.id] });
+    expect(created.status).toBe(201);
+    expect(created.body.data.totalAmountPaise).toBe(4030350);
+
+    mockedPrisma.paymentRun.findUnique
+      .mockResolvedValueOnce({ id: 'run-e2e', status: 'DRAFT' })
+      .mockResolvedValueOnce({ id: 'run-e2e', status: 'APPROVED' })
+      .mockResolvedValueOnce({
+        id: 'run-e2e',
+        status: 'APPROVED',
+        paymentItems: [
+          {
+            purchaseId: purchase.id,
+            purchase: {
+              id: purchase.id,
+              amountPaise: purchase.amountPaise,
+              farmer: {
+                name: 'Kamal Pawar',
+                bankAccount: '9876543210',
+                bankIfsc: 'SBIN0004321',
+              },
+            },
+          },
+        ],
+      });
+    mockedPrisma.paymentRun.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.purchase.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.auditTrail.create.mockResolvedValue({ id: 'audit-e2e' });
+
+    const approved = await request(app).patch('/api/v1/payment-runs/run-e2e/approve').set(headers);
+    expect(approved.status).toBe(200);
+    expect(approved.body.data.status).toBe('APPROVED');
+
+    const exported = await request(app).get('/api/v1/payment-runs/run-e2e/export').set(headers);
+    expect(exported.status).toBe(200);
+    expect(exported.text).toContain('"Kamal Pawar","9876543210","SBIN0004321",4030350');
+    expect(mockedPrisma.purchase.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'PAID' } }),
+    );
+    expect(mockedPrisma.paymentRun.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'EXPORTED' } }),
+    );
+  });
+
+  it('blocks operators from every payment-run endpoint', async () => {
+    const operatorToken = createOperatorToken();
+    const headers = authHeaders(operatorToken);
+    const responses = await Promise.all([
+      request(app)
+        .post('/api/v1/payment-runs')
+        .set(headers)
+        .send({ purchase_ids: ['p1'] }),
+      request(app).get('/api/v1/payment-runs').set(headers),
+      request(app).get('/api/v1/payment-runs/run-1').set(headers),
+      request(app).patch('/api/v1/payment-runs/run-1/approve').set(headers),
+      request(app).get('/api/v1/payment-runs/run-1/export').set(headers),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([403, 403, 403, 403, 403]);
   });
 
   it('returns a clear OCR error path when the parser cannot read an image', async () => {
