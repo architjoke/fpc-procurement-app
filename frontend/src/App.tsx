@@ -3,6 +3,8 @@ import { Link, Route, Routes, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { api } from './lib/api';
 import { getSession, saveSession, clearSession, type AuthSession } from './lib/session';
+import { useAuthStore } from './lib/authStore';
+import LoginPage from './pages/LoginPage';
 import { useOfflineQueue } from './hooks/useOfflineQueue';
 import { offlineDb } from './lib/offlineDb';
 
@@ -1229,7 +1231,8 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
 };
 
 export default function App() {
-  const [session, setSession] = useState<AuthSession | null>(() => getSession());
+  const session = useAuthStore((state) => state.session);
+  const clearAuthSession = useAuthStore((state) => state.clearSession);
   const navigate = useNavigate();
 
   const logout = async () => {
@@ -1240,8 +1243,7 @@ export default function App() {
         // Local sign-out must still work when offline.
       }
     }
-    clearSession();
-    setSession(null);
+    clearAuthSession();
     navigate('/');
   };
 
@@ -1250,11 +1252,11 @@ export default function App() {
       <nav className="topbar">
         <Link to="/">Home</Link>
         <Link to="/login">Login</Link>
-        <Link to="/purchases">Capture purchase</Link>
+        <Link to="/operator/find">Capture purchase</Link>
         {session?.user.role === 'office_manager' && (
           <>
-            <Link to="/review">Flagged review</Link>
-            <Link to="/payments">Payment runs</Link>
+            <Link to="/manager/review">Flagged review</Link>
+            <Link to="/manager/payments">Payment runs</Link>
           </>
         )}
         {session && (
@@ -1265,17 +1267,9 @@ export default function App() {
       </nav>
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route
-          path="/login"
-          element={
-            <Login
-              onLogin={(nextSession) => {
-                setSession(nextSession);
-                navigate('/purchases');
-              }}
-            />
-          }
-        />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/manager/review" element={<ManagerReview />} />
+        <Route path="/manager/payments" element={<PaymentManagement />} />
         <Route
           path="/purchases"
           element={
