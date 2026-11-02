@@ -7,7 +7,13 @@ process.env.NODE_ENV = 'test';
 
 const mockedPrisma = vi.hoisted(() => ({
   user: { findUnique: vi.fn() },
-  farmer: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
+  farmer: {
+    findUnique: vi.fn(),
+    findFirst: vi.fn(),
+    findMany: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+  },
   crop: { findUnique: vi.fn() },
   purchase: { create: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
   smsOutbox: { create: vi.fn() },
@@ -164,6 +170,151 @@ describe('API flows', () => {
     expect(mockedPrisma.farmer.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { centreId: 'centre-1' } }),
     );
+  });
+
+  it('does not return a farmer from another centre to an operator', async () => {
+    const token = jwt.sign(
+      {
+        sub: 'user-1',
+        email: 'operator@demo.in',
+        role: 'centre_operator',
+        centreId: 'centre-1',
+        type: 'access',
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+    mockedPrisma.farmer.findFirst.mockResolvedValue(null);
+
+    const response = await request(app)
+      .get('/api/v1/farmers/farmer-outside-centre')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(response.status).toBe(404);
+    expect(mockedPrisma.farmer.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'farmer-outside-centre', centreId: 'centre-1' },
+      }),
+    );
+  });
+
+  it('creates a farmer for the operator centre using registry field names', async () => {
+    const token = jwt.sign(
+      {
+        sub: 'user-1',
+        email: 'operator@demo.in',
+        role: 'centre_operator',
+        centreId: 'centre-1',
+        type: 'access',
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+    mockedPrisma.farmer.create.mockResolvedValue({
+      id: 'farmer-2',
+      memberId: 'F-2001',
+      centreId: 'centre-1',
+    });
+
+    const response = await request(app)
+      .post('/api/v1/farmers')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        member_id: 'F-2001',
+        name: 'Sakharam Pawar',
+        village: 'Ausa',
+        land_acres: 2.5,
+        bank_account: '123456789012',
+        bank_ifsc: 'SBIN0001234',
+        consent_given_at: '2026-11-02T00:00:00.000Z',
+        centre_id: 'centre-1',
+      });
+
+    expect(response.status).toBe(201);
+    expect(mockedPrisma.farmer.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          memberId: 'F-2001',
+          landAcres: 2.5,
+          centreId: 'centre-1',
+        }),
+      }),
+    );
+  });
+
+  it('rejects invalid farmer input and cross-centre creation', async () => {
+    const token = jwt.sign(
+      {
+        sub: 'user-1',
+        email: 'operator@demo.in',
+        role: 'centre_operator',
+        centreId: 'centre-1',
+        type: 'access',
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+    const body = {
+      memberId: 'F-2002',
+      name: 'Anand Kale',
+      village: 'Latur',
+      landAcres: 2,
+      bankAccount: '123456789012',
+      bankIfsc: 'SBIN0001234',
+      centreId: 'centre-2',
+    };
+
+    const invalid = await request(app)
+      .post('/api/v1/farmers')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ...body, landAcres: 0 });
+    expect(invalid.status).toBe(400);
+
+    const crossCentre = await request(app)
+      .post('/api/v1/farmers')
+      .set('Authorization', `Bearer ${token}`)
+      .send(body);
+    expect(crossCentre.status).toBe(403);
+    expect(mockedPrisma.farmer.create).not.toHaveBeenCalled();
+  });
+
+  it('updates farmers only within the operator centre', async () => {
+    const token = jwt.sign(
+      {
+        sub: 'user-1',
+        email: 'operator@demo.in',
+        role: 'centre_operator',
+        centreId: 'centre-1',
+        type: 'access',
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+    mockedPrisma.farmer.findFirst.mockResolvedValue({
+      id: 'farmer-1',
+      centreId: 'centre-1',
+    });
+    mockedPrisma.farmer.update.mockResolvedValue({
+      id: 'farmer-1',
+      name: 'Updated Farmer',
+      centreId: 'centre-1',
+    });
+
+    const response = await request(app)
+      .put('/api/v1/farmers/farmer-1')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Updated Farmer' });
+
+    expect(response.status).toBe(200);
+    expect(mockedPrisma.farmer.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'farmer-1', centreId: 'centre-1' },
+      }),
+    );
+    expect(mockedPrisma.farmer.update).toHaveBeenCalledWith({
+      where: { id: 'farmer-1' },
+      data: { name: 'Updated Farmer' },
+    });
   });
 
   it('rate limits login attempts to five per minute per IP', async () => {

@@ -105,6 +105,137 @@ async function main() {
     },
   });
 
+  const additionalFarmers = [
+    {
+      memberId: 'F-1004',
+      name: 'Shankar Pawar',
+      village: 'Bori',
+      landAcres: 3.2,
+      centreId: centre1.id,
+    },
+    {
+      memberId: 'F-1005',
+      name: 'Laxman Deshmukh',
+      village: 'Harangul',
+      landAcres: 2.8,
+      centreId: centre1.id,
+    },
+    {
+      memberId: 'F-1006',
+      name: 'Vitthal More',
+      village: 'Murud',
+      landAcres: 4.1,
+      centreId: centre1.id,
+    },
+    {
+      memberId: 'F-1007',
+      name: 'Suresh Kale',
+      village: 'Renapur',
+      landAcres: 2.4,
+      centreId: centre1.id,
+    },
+    {
+      memberId: 'F-1008',
+      name: 'Ramesh Patil',
+      village: 'Bhatangali',
+      landAcres: 5.0,
+      centreId: centre1.id,
+    },
+    {
+      memberId: 'F-1009',
+      name: 'Dnyaneshwar Jadhav',
+      village: 'Nitur',
+      landAcres: 3.6,
+      centreId: centre1.id,
+    },
+    {
+      memberId: 'F-1010',
+      name: 'Balu Shinde',
+      village: 'Kasarshirshi',
+      landAcres: 2.2,
+      centreId: centre2.id,
+    },
+    {
+      memberId: 'F-1011',
+      name: 'Ganesh Biradar',
+      village: 'Tawarja',
+      landAcres: 4.3,
+      centreId: centre2.id,
+    },
+    {
+      memberId: 'F-1012',
+      name: 'Maruti Gaikwad',
+      village: 'Ausa',
+      landAcres: 3.1,
+      centreId: centre2.id,
+    },
+    {
+      memberId: 'F-1013',
+      name: 'Tukaram Mane',
+      village: 'Ujani',
+      landAcres: 5.4,
+      centreId: centre2.id,
+    },
+    {
+      memberId: 'F-1014',
+      name: 'Ashok Wagh',
+      village: 'Killari',
+      landAcres: 2.7,
+      centreId: centre2.id,
+    },
+    {
+      memberId: 'F-1015',
+      name: 'Pandurang Kadam',
+      village: 'Makni',
+      landAcres: 3.9,
+      centreId: centre2.id,
+    },
+    {
+      memberId: 'F-1016',
+      name: 'Keshav Rathod',
+      village: 'Nilanga',
+      landAcres: 4.6,
+      centreId: centre3.id,
+    },
+    {
+      memberId: 'F-1017',
+      name: 'Savita Jadhav',
+      village: 'Aurad Shahajani',
+      landAcres: 2.6,
+      centreId: centre3.id,
+    },
+    {
+      memberId: 'F-1018',
+      name: 'Suman Shinde',
+      village: 'Kasarsirsi',
+      landAcres: 3.4,
+      centreId: centre3.id,
+    },
+    {
+      memberId: 'F-1019',
+      name: 'Lata Pawar',
+      village: 'Halgara',
+      landAcres: 2.9,
+      centreId: centre3.id,
+    },
+    {
+      memberId: 'F-1020',
+      name: 'Meena Kale',
+      village: 'Nalegaon',
+      landAcres: 4.2,
+      centreId: centre3.id,
+    },
+  ];
+
+  await prisma.farmer.createMany({
+    data: additionalFarmers.map((farmer, index) => ({
+      ...farmer,
+      bankAccount: `${456789012300 + index}`,
+      bankIfsc: ['SBIN0001234', 'HDFC0002345', 'ICIC0003456'][index % 3]!,
+      consentGivenAt: new Date(),
+    })),
+  });
+
   const samplePurchases = [
     {
       farmerId: farmerSunil.id,
