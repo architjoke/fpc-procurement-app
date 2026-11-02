@@ -14,6 +14,11 @@ export interface PurchaseDraft {
   tareKg: number;
   moisturePct: number;
   ratePerQuintal: number;
+  ocrJobId?: string;
+  ocrWeight?: number;
+  ocrMoisture?: number;
+  ocrWeightReconciled?: boolean;
+  ocrMoistureReconciled?: boolean;
 }
 
 export interface SyncStatusEntry {
@@ -53,6 +58,15 @@ const makeSignedEntry = async (
     device_timestamp: new Date().toISOString(),
     nonce: crypto.randomUUID(),
     rate_per_quintal: draft.ratePerQuintal,
+    ...(draft.ocrJobId ? { ocr_job_id: draft.ocrJobId } : {}),
+    ...(draft.ocrWeight !== undefined ? { ocr_weight: draft.ocrWeight } : {}),
+    ...(draft.ocrMoisture !== undefined ? { ocr_moisture: draft.ocrMoisture } : {}),
+    ...(draft.ocrWeightReconciled !== undefined
+      ? { ocr_weight_reconciled: draft.ocrWeightReconciled }
+      : {}),
+    ...(draft.ocrMoistureReconciled !== undefined
+      ? { ocr_moisture_reconciled: draft.ocrMoistureReconciled }
+      : {}),
   };
 
   return {
@@ -138,6 +152,11 @@ export const useOfflineQueue = () => {
                 device_timestamp,
                 nonce,
                 rate_per_quintal,
+                ocr_job_id,
+                ocr_weight,
+                ocr_moisture,
+                ocr_weight_reconciled,
+                ocr_moisture_reconciled,
                 hmac_signature,
               }) => ({
                 uuid,
@@ -151,6 +170,11 @@ export const useOfflineQueue = () => {
                 device_timestamp,
                 nonce,
                 rate_per_quintal,
+                ...(ocr_job_id ? { ocr_job_id } : {}),
+                ...(ocr_weight !== undefined ? { ocr_weight } : {}),
+                ...(ocr_moisture !== undefined ? { ocr_moisture } : {}),
+                ...(ocr_weight_reconciled !== undefined ? { ocr_weight_reconciled } : {}),
+                ...(ocr_moisture_reconciled !== undefined ? { ocr_moisture_reconciled } : {}),
                 hmac_signature,
               }),
             ),
@@ -254,6 +278,15 @@ export const useOfflineQueue = () => {
           grossKg: draft.grossKg,
           tareKg: draft.tareKg,
           moisturePct: draft.moisturePct,
+          ...(draft.ocrJobId ? { ocrJobId: draft.ocrJobId } : {}),
+          ...(draft.ocrWeight !== undefined ? { ocrWeight: draft.ocrWeight } : {}),
+          ...(draft.ocrMoisture !== undefined ? { ocrMoisture: draft.ocrMoisture } : {}),
+          ...(draft.ocrWeightReconciled !== undefined
+            ? { ocrWeightReconciled: draft.ocrWeightReconciled }
+            : {}),
+          ...(draft.ocrMoistureReconciled !== undefined
+            ? { ocrMoistureReconciled: draft.ocrMoistureReconciled }
+            : {}),
         });
         return 'SAVED';
       } catch (requestError) {
@@ -287,6 +320,15 @@ export const useOfflineQueue = () => {
           tareKg: current.tare_kg,
           moisturePct: current.moisture_pct,
           ratePerQuintal: current.rate_per_quintal,
+          ...(current.ocr_job_id ? { ocrJobId: current.ocr_job_id } : {}),
+          ...(current.ocr_weight !== undefined ? { ocrWeight: current.ocr_weight } : {}),
+          ...(current.ocr_moisture !== undefined ? { ocrMoisture: current.ocr_moisture } : {}),
+          ...(current.ocr_weight_reconciled !== undefined
+            ? { ocrWeightReconciled: current.ocr_weight_reconciled }
+            : {}),
+          ...(current.ocr_moisture_reconciled !== undefined
+            ? { ocrMoistureReconciled: current.ocr_moisture_reconciled }
+            : {}),
         },
         current.uuid,
         current.createdAt,

@@ -75,6 +75,35 @@ describe('business rules', () => {
     expect(verifySyncPurchaseSignature(payload, 'deadbeef', 'device-secret')).toBe(false);
   });
 
+  it('authenticates optional OCR references and reconciliation flags in sync payloads', () => {
+    const payload = {
+      uuid: '37ba8d5b-d259-44d7-a187-5ea594f3cb9c',
+      farmer_id: 'farmer-1',
+      centre_id: 'centre-1',
+      crop_id: 'crop-1',
+      grade: 'A',
+      gross_kg: 100,
+      tare_kg: 5,
+      moisture_pct: 12.5,
+      device_timestamp: '2026-11-02T10:00:00Z',
+      nonce: '0d61f20f-45bc-45d0-b190-4332fca73c22',
+      rate_per_quintal: 4850,
+      ocr_job_id: 'ocr-job-1',
+      ocr_weight: 100,
+      ocr_weight_reconciled: false,
+    };
+    const signature = signSyncPurchase(payload, 'device-secret');
+
+    expect(verifySyncPurchaseSignature(payload, signature, 'device-secret')).toBe(true);
+    expect(
+      verifySyncPurchaseSignature(
+        { ...payload, ocr_weight_reconciled: true },
+        signature,
+        'device-secret',
+      ),
+    ).toBe(false);
+  });
+
   it('detects each configured anomaly trigger', () => {
     expect(
       detectAnomalies({

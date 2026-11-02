@@ -50,11 +50,18 @@ The project is split into a plain Express + TypeScript backend and a Vite + Reac
 
 ## OCR flow
 
-1. Operator uploads a photo of a scale or moisture meter.
-2. Backend calls OCR.space when configured.
-3. Numeric values are parsed and returned as prefilled values.
-4. Operator confirms or corrects the values before save.
-5. If the OCR result differs from the typed value, the save is blocked until reconciled.
+1. An authenticated centre operator uploads a JPEG, PNG, GIF, or WebP photo (maximum 1 MiB).
+2. The OCR provider factory selects OCR.space using `OCR_SPACE_API_KEY`, or a mock provider when
+   `OCR_PROVIDER=mock`; routes depend only on the `OcrProvider` interface.
+3. OCR numeric values are parsed from raw text, including `kg`/`%` suffixes, decimal commas, and
+   common OCR character substitutions. Unreadable/low-confidence scans return `OCR_UNREADABLE` or
+   `OCR_UNAVAILABLE` with HTTP 422 so manual entry remains available.
+4. Every valid upload result is persisted as an operator-owned `ocr_jobs` row. `image_url` stores a
+   SHA-256 reference to the uploaded bytes; raw bytes are not retained by the application.
+5. Purchase creation loads the job for the current operator and stores its confidence and image
+   reference. Changed prefilled values require an explicit reconciliation flag; otherwise the
+   purchase service returns `OCR_MISMATCH`.
+6. OCR metadata is carried and HMAC-signed when a purchase must enter the offline sync queue.
 
 ## Offline sync flow
 
@@ -66,7 +73,7 @@ The project is split into a plain Express + TypeScript backend and a Vite + Reac
 ### Offline purchase signature format
 
 The client sends each batch item with `hmac_signature` excluded from the signed content. The
-remaining fields are serialized in this exact lexicographic key order:
+remaining fields are serialized in this exact key order:
 
 `centre_id`, `crop_id`, `device_timestamp`, `farmer_id`, `grade`, `gross_kg`, `moisture_pct`,
 `nonce`, `rate_per_quintal`, `tare_kg`, `uuid`.
@@ -74,9 +81,11 @@ remaining fields are serialized in this exact lexicographic key order:
 Each component is `key=encodeURIComponent(value)`; components are joined by `|`. Timestamps are
 normalized to UTC ISO-8601 with milliseconds, and numbers use JavaScript's canonical `String(number)`
 representation. HMAC-SHA256 uses the device secret returned at operator login and emits lowercase
-hex. The batch sends the device ID and device secret in `x-device-id` and `x-device-secret` headers.
-The server stores only a SHA-256 hash of each device secret and expires consumed nonces after 24
-hours.
+hex. When OCR is attached, defined optional fields (`ocr_job_id`, `ocr_moisture`,
+`ocr_moisture_reconciled`, `ocr_weight`, `ocr_weight_reconciled`) are appended after the base fields
+in that lexicographic order; undefined optional fields are omitted. The batch sends the device ID
+and device secret in `x-device-id` and `x-device-secret` headers. The server stores only a SHA-256
+hash of each device secret and expires consumed nonces after 24 hours.
 
 ## Assumptions and future work
 

@@ -11,6 +11,11 @@ export type SyncPurchaseFields = Pick<
   | 'device_timestamp'
   | 'nonce'
   | 'rate_per_quintal'
+  | 'ocr_job_id'
+  | 'ocr_weight'
+  | 'ocr_moisture'
+  | 'ocr_weight_reconciled'
+  | 'ocr_moisture_reconciled'
 >;
 
 const fields = [
@@ -26,9 +31,16 @@ const fields = [
   'tare_kg',
   'uuid',
 ] as const satisfies readonly (keyof SyncPurchaseFields)[];
+const optionalOcrFields = [
+  'ocr_job_id',
+  'ocr_moisture',
+  'ocr_moisture_reconciled',
+  'ocr_weight',
+  'ocr_weight_reconciled',
+] as const satisfies readonly (keyof SyncPurchaseFields)[];
 
 export const canonicalizeSyncPurchase = (payload: SyncPurchaseFields): string =>
-  fields
+  [...fields, ...optionalOcrFields.filter((field) => payload[field] !== undefined)]
     .map((field) => {
       const value =
         field === 'device_timestamp'

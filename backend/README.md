@@ -18,6 +18,7 @@ Set these variables in `backend/.env` (do not commit this file):
 - `JWT_SECRET` and `JWT_REFRESH_SECRET` to separate random secrets
 - `PORT=5000`
 - `OCR_SPACE_API_KEY` (optional; required for live OCR)
+- `OCR_PROVIDER=mock` selects the local mock provider; OCR.space is the default.
 - `CORS_ORIGIN=http://localhost:5173`
 
 ## Database and seed

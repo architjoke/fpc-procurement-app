@@ -114,6 +114,73 @@ input {
   font-size: 1rem;
 }
 
+input[type='file'] {
+  width: 100%;
+}
+
+input[type='checkbox'] {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: #1f6f49;
+}
+
+.ocr-capture-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.ocr-capture-group.with-photo {
+  grid-template-columns: minmax(180px, 0.8fr) minmax(0, 1.2fr);
+}
+
+.ocr-reading-inputs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.ocr-value-field {
+  display: grid;
+  align-content: start;
+  gap: 0.45rem;
+}
+
+.ocr-photo {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+}
+
+.ocr-photo img {
+  flex: 0 0 auto;
+  width: 112px;
+  height: 88px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.ocr-photo p {
+  margin: 0 0 0.3rem;
+}
+
+.ocr-photo small {
+  color: #6b7280;
+}
+
+.ocr-confirm {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
 select {
   border: 1px solid #d1d5db;
   border-radius: 10px;
@@ -223,4 +290,11 @@ select {
   padding-left: 1.25rem;
   display: grid;
   gap: 0.75rem;
+}
+
+@media (max-width: 720px) {
+  .ocr-capture-group.with-photo,
+  .ocr-reading-inputs {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

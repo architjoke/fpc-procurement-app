@@ -50,27 +50,28 @@ enum PaymentRunItemStatus {
 }
 
 model User {
-  id            String   @id @default(cuid())
-  email         String   @unique
-  passwordHash  String   @map("password_hash")
-  role          Role
-  centreId      String?  @map("centre_id")
-  createdAt     DateTime @default(now()) @map("created_at")
-  centre        Centre?  @relation(fields: [centreId], references: [id])
-  priceBoards   PriceBoard[]
-  paymentRuns   PaymentRun[]
-  auditTrails   AuditTrail[]
+  id             String          @id @default(cuid())
+  email          String          @unique
+  passwordHash   String          @map("password_hash")
+  role           Role
+  centreId       String?         @map("centre_id")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  centre         Centre?         @relation(fields: [centreId], references: [id])
+  priceBoards    PriceBoard[]
+  paymentRuns    PaymentRun[]
+  auditTrails    AuditTrail[]
   deviceSessions DeviceSession[]
+  ocrJobs        OcrJob[]
 
   @@map("users")
 }
 
 model Centre {
-  id        String   @id @default(cuid())
+  id        String     @id @default(cuid())
   name      String
   village   String
-  code      String   @unique
-  createdAt DateTime @default(now()) @map("created_at")
+  code      String     @unique
+  createdAt DateTime   @default(now()) @map("created_at")
   users     User[]
   farmers   Farmer[]
   purchases Purchase[]
@@ -79,18 +80,18 @@ model Centre {
 }
 
 model Farmer {
-  id             String    @id @default(cuid())
-  memberId       String    @unique @map("member_id")
+  id             String     @id @default(cuid())
+  memberId       String     @unique @map("member_id")
   name           String
   village        String
-  landAcres      Decimal   @map("land_acres")
-  bankAccount    String    @map("bank_account")
-  bankIfsc       String    @map("bank_ifsc")
-  consentGivenAt  DateTime  @map("consent_given_at")
-  centreId       String    @map("centre_id")
-  centre         Centre    @relation(fields: [centreId], references: [id])
+  landAcres      Decimal    @map("land_acres")
+  bankAccount    String     @map("bank_account")
+  bankIfsc       String     @map("bank_ifsc")
+  consentGivenAt DateTime   @map("consent_given_at")
+  centreId       String     @map("centre_id")
+  centre         Centre     @relation(fields: [centreId], references: [id])
   purchases      Purchase[]
-  createdAt      DateTime  @default(now()) @map("created_at")
+  createdAt      DateTime   @default(now()) @map("created_at")
 
   @@map("farmers")
 }
@@ -106,106 +107,106 @@ model Crop {
 }
 
 model PriceBoard {
-  id              String   @id @default(cuid())
-  cropId          String   @map("crop_id")
-  crop            Crop     @relation(fields: [cropId], references: [id])
-  grade           String
-  ratePerQuintal  Int      @map("rate_per_quintal")
-  effectiveDate   DateTime @db.Date @map("effective_date")
-  setByUserId     String   @map("set_by_user_id")
-  setByUser       User     @relation(fields: [setByUserId], references: [id])
-  createdAt       DateTime @default(now()) @map("created_at")
+  id             String   @id @default(cuid())
+  cropId         String   @map("crop_id")
+  crop           Crop     @relation(fields: [cropId], references: [id])
+  grade          String
+  ratePerQuintal Int      @map("rate_per_quintal")
+  effectiveDate  DateTime @map("effective_date") @db.Date
+  setByUserId    String   @map("set_by_user_id")
+  setByUser      User     @relation(fields: [setByUserId], references: [id])
+  createdAt      DateTime @default(now()) @map("created_at")
 
   @@unique([cropId, grade, effectiveDate])
   @@map("price_board")
 }
 
 model Purchase {
-  id               String         @id @default(cuid())
-  uuid             String         @unique
-  farmerId         String         @map("farmer_id")
-  farmer           Farmer         @relation(fields: [farmerId], references: [id])
-  centreId         String         @map("centre_id")
-  centre           Centre         @relation(fields: [centreId], references: [id])
-  cropId           String         @map("crop_id")
-  crop             Crop           @relation(fields: [cropId], references: [id])
-  grade            String
-  grossKg          Decimal        @map("gross_kg")
-  tareKg           Decimal        @map("tare_kg")
-  moisturePct      Decimal        @map("moisture_pct")
-  netKg            Decimal        @map("net_kg")
-  rate             Int
-  amountPaise      Int            @map("amount_paise")
-  status           PurchaseStatus
-  deviceSignature  String?        @map("device_signature")
-  deviceTimestamp  DateTime?      @map("device_timestamp")
-  ocrConfidence    Decimal?       @map("ocr_confidence")
-  photoUrl         String?        @map("photo_url")
-  createdAt        DateTime       @default(now()) @map("created_at")
-  paymentRunItems  PaymentRunItem[]
-  smsOutbox        SmsOutbox[]
-  ocrJobs          OcrJob[]
+  id              String           @id @default(cuid())
+  uuid            String           @unique
+  farmerId        String           @map("farmer_id")
+  farmer          Farmer           @relation(fields: [farmerId], references: [id])
+  centreId        String           @map("centre_id")
+  centre          Centre           @relation(fields: [centreId], references: [id])
+  cropId          String           @map("crop_id")
+  crop            Crop             @relation(fields: [cropId], references: [id])
+  grade           String
+  grossKg         Decimal          @map("gross_kg")
+  tareKg          Decimal          @map("tare_kg")
+  moisturePct     Decimal          @map("moisture_pct")
+  netKg           Decimal          @map("net_kg")
+  rate            Int
+  amountPaise     Int              @map("amount_paise")
+  status          PurchaseStatus
+  deviceSignature String?          @map("device_signature")
+  deviceTimestamp DateTime?        @map("device_timestamp")
+  ocrConfidence   Decimal?         @map("ocr_confidence")
+  photoUrl        String?          @map("photo_url")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  paymentRunItems PaymentRunItem[]
+  smsOutbox       SmsOutbox[]
+  ocrJobs         OcrJob[]
 
   @@map("purchases")
 }
 
 model PaymentRun {
-  id              String           @id @default(cuid())
-  runDate         DateTime         @map("run_date")
-  status          PaymentRunStatus
-  totalAmountPaise Int            @map("total_amount_paise")
-  createdBy       String           @map("created_by")
-  createdByUser   User             @relation(fields: [createdBy], references: [id])
-  paymentItems    PaymentRunItem[]
-  createdAt       DateTime         @default(now()) @map("created_at")
+  id               String           @id @default(cuid())
+  runDate          DateTime         @map("run_date")
+  status           PaymentRunStatus
+  totalAmountPaise Int              @map("total_amount_paise")
+  createdBy        String           @map("created_by")
+  createdByUser    User             @relation(fields: [createdBy], references: [id])
+  paymentItems     PaymentRunItem[]
+  createdAt        DateTime         @default(now()) @map("created_at")
 
   @@map("payment_runs")
 }
 
 model PaymentRunItem {
-  id            String                @id @default(cuid())
-  paymentRunId  String                @map("payment_run_id")
-  paymentRun    PaymentRun            @relation(fields: [paymentRunId], references: [id])
-  purchaseId    String                @map("purchase_id")
-  purchase      Purchase              @relation(fields: [purchaseId], references: [id])
-  status        PaymentRunItemStatus
-  createdAt     DateTime              @default(now()) @map("created_at")
+  id           String               @id @default(cuid())
+  paymentRunId String               @map("payment_run_id")
+  paymentRun   PaymentRun           @relation(fields: [paymentRunId], references: [id])
+  purchaseId   String               @map("purchase_id")
+  purchase     Purchase             @relation(fields: [purchaseId], references: [id])
+  status       PaymentRunItemStatus
+  createdAt    DateTime             @default(now()) @map("created_at")
 
   @@map("payment_run_items")
 }
 
 model SyncLog {
-  id          String    @id @default(cuid())
-  purchaseUuid String    @map("purchase_uuid")
-  deviceId    String    @map("device_id")
-  status      SyncStatus
-  reason      String?
-  receivedAt  DateTime  @default(now()) @map("received_at")
+  id           String     @id @default(cuid())
+  purchaseUuid String     @map("purchase_uuid")
+  deviceId     String     @map("device_id")
+  status       SyncStatus
+  reason       String?
+  receivedAt   DateTime   @default(now()) @map("received_at")
 
   @@map("sync_log")
 }
 
 model DeviceSession {
-  deviceId                 String       @id @map("device_id")
-  userId                   String       @map("user_id")
-  user                     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deviceSecretHash         String       @map("device_secret_hash")
-  lastAcceptedTimestamp    DateTime?    @map("last_accepted_timestamp")
-  createdAt                DateTime     @default(now()) @map("created_at")
-  revokedAt                DateTime?    @map("revoked_at")
-  nonces                   SyncNonce[]
+  deviceId              String      @id @map("device_id")
+  userId                String      @map("user_id")
+  user                  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceSecretHash      String      @map("device_secret_hash")
+  lastAcceptedTimestamp DateTime?   @map("last_accepted_timestamp")
+  createdAt             DateTime    @default(now()) @map("created_at")
+  revokedAt             DateTime?   @map("revoked_at")
+  nonces                SyncNonce[]
 
   @@index([userId])
   @@map("device_sessions")
 }
 
 model SyncNonce {
-  id          String        @id @default(cuid())
-  deviceId    String        @map("device_id")
-  device      DeviceSession @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
-  nonce       String
-  expiresAt   DateTime      @map("expires_at")
-  createdAt   DateTime      @default(now()) @map("created_at")
+  id        String        @id @default(cuid())
+  deviceId  String        @map("device_id")
+  device    DeviceSession @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  nonce     String
+  expiresAt DateTime      @map("expires_at")
+  createdAt DateTime      @default(now()) @map("created_at")
 
   @@unique([deviceId, nonce])
   @@index([expiresAt])
@@ -242,6 +243,8 @@ model OcrJob {
   id             String    @id @default(cuid())
   purchaseId     String?   @map("purchase_id")
   purchase       Purchase? @relation(fields: [purchaseId], references: [id])
+  operatorId     String?   @map("operator_id")
+  operator       User?     @relation(fields: [operatorId], references: [id], onDelete: SetNull)
   imageUrl       String    @map("image_url")
   rawOcrText     String?   @map("raw_ocr_text")
   parsedWeight   Decimal?  @map("parsed_weight")
@@ -250,5 +253,6 @@ model OcrJob {
   status         OcrStatus
   createdAt      DateTime  @default(now()) @map("created_at")
 
+  @@index([operatorId, status])
   @@map("ocr_jobs")
 }

@@ -12,6 +12,11 @@ export interface SyncPurchasePayload {
   device_timestamp: string;
   nonce: string;
   rate_per_quintal: number;
+  ocr_job_id?: string;
+  ocr_weight?: number;
+  ocr_moisture?: number;
+  ocr_weight_reconciled?: boolean;
+  ocr_moisture_reconciled?: boolean;
   hmac_signature?: string;
 }
 
@@ -28,14 +33,25 @@ const syncPurchaseFields = [
   'tare_kg',
   'uuid',
 ] as const;
+const optionalOcrFields = [
+  'ocr_job_id',
+  'ocr_moisture',
+  'ocr_moisture_reconciled',
+  'ocr_weight',
+  'ocr_weight_reconciled',
+] as const;
 
 export const canonicalizeSyncPurchase = (payload: SyncPurchasePayload): string => {
-  return syncPurchaseFields
+  const fields: string[] = [
+    ...syncPurchaseFields,
+    ...optionalOcrFields.filter((field) => payload[field] !== undefined),
+  ];
+  return fields
     .map((field) => {
       const value =
         field === 'device_timestamp'
           ? new Date(payload.device_timestamp).toISOString()
-          : String(payload[field]);
+          : String(payload[field as keyof SyncPurchasePayload]);
       return `${field}=${encodeURIComponent(value)}`;
     })
     .join('|');

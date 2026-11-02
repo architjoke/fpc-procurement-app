@@ -14,6 +14,7 @@ import {
   calculateNetWeightKg,
 } from '../utils/calculations.js';
 import { detectAnomalies } from '../services/anomaly.js';
+import { getOcrMismatchFields } from '../services/purchaseOcr.js';
 
 const router = Router();
 
@@ -29,7 +30,9 @@ const createPurchaseSchema = z
     deviceTimestamp: z.string().datetime({ offset: true }).optional(),
     ocrWeight: z.coerce.number().positive().finite().optional(),
     ocrMoisture: z.coerce.number().min(0).max(100).finite().optional(),
-    photoUrl: z.string().optional(),
+    ocrJobId: z.string().min(1).optional(),
+    ocrWeightReconciled: z.boolean().optional(),
+    ocrMoistureReconciled: z.boolean().optional(),
   })
   .strict()
   .superRefine((input, context) => {
@@ -72,16 +75,70 @@ router.post(
 
     try {
       const input = parsedInput.data;
-      if (input.ocrWeight != null && Math.abs(input.grossKg - input.ocrWeight) > 0.1) {
+      const hasOcrValues = input.ocrWeight !== undefined || input.ocrMoisture !== undefined;
+      const ocrJob = input.ocrJobId
+        ? await prisma.ocrJob.findFirst({
+            where: {
+              id: input.ocrJobId,
+              operatorId: req.user!.id,
+              status: 'COMPLETED',
+            },
+          })
+        : null;
+      if (input.ocrJobId && !ocrJob) {
         return res.status(400).json({
-          message: 'OCR value differs from the entered weight. Please reconcile before saving.',
+          code: 'OCR_JOB_INVALID',
+          message: 'OCR result is unavailable. Scan the image again or enter values manually.',
         });
       }
-
-      if (input.ocrMoisture != null && Math.abs(input.moisturePct - input.ocrMoisture) > 0.1) {
+      if (!ocrJob && hasOcrValues) {
+        const mismatches = getOcrMismatchFields(input);
+        if (mismatches.length > 0) {
+          return res.status(400).json({
+            code: 'OCR_MISMATCH',
+            message: 'Value differs from OCR reading, please reconcile.',
+            fields: mismatches,
+          });
+        }
         return res.status(400).json({
-          message: 'OCR value differs from the entered moisture. Please reconcile before saving.',
+          code: 'OCR_JOB_REQUIRED',
+          message: 'OCR job reference is required when using prefilled values.',
         });
+      }
+      if (
+        ocrJob &&
+        ((input.ocrWeight !== undefined &&
+          (ocrJob.parsedWeight === null ||
+            Math.abs(Number(ocrJob.parsedWeight) - input.ocrWeight) > 0.0001)) ||
+          (input.ocrMoisture !== undefined &&
+            (ocrJob.parsedMoisture === null ||
+              Math.abs(Number(ocrJob.parsedMoisture) - input.ocrMoisture) > 0.0001)))
+      ) {
+        return res.status(400).json({
+          code: 'OCR_JOB_MISMATCH',
+          message: 'OCR values do not match the stored scan. Scan the image again.',
+        });
+      }
+      if (ocrJob) {
+        const mismatches = getOcrMismatchFields({
+          grossKg: input.grossKg,
+          moisturePct: input.moisturePct,
+          ...(ocrJob.parsedWeight !== null ? { ocrWeight: Number(ocrJob.parsedWeight) } : {}),
+          ...(ocrJob.parsedMoisture !== null ? { ocrMoisture: Number(ocrJob.parsedMoisture) } : {}),
+          ...(input.ocrWeightReconciled !== undefined
+            ? { ocrWeightReconciled: input.ocrWeightReconciled }
+            : {}),
+          ...(input.ocrMoistureReconciled !== undefined
+            ? { ocrMoistureReconciled: input.ocrMoistureReconciled }
+            : {}),
+        });
+        if (mismatches.length > 0) {
+          return res.status(400).json({
+            code: 'OCR_MISMATCH',
+            message: 'Value differs from OCR reading, please reconcile.',
+            fields: mismatches,
+          });
+        }
       }
 
       const farmer = await prisma.farmer.findFirst({
@@ -134,26 +191,35 @@ router.post(
       const purchaseId = uuidv4();
       const purchaseStatus = 'DRAFT';
 
-      const purchase = await prisma.purchase.create({
-        data: {
-          uuid: purchaseId,
-          farmerId: input.farmerId,
-          centreId: farmer.centreId,
-          cropId: input.cropId,
-          grade: input.grade,
-          grossKg: input.grossKg,
-          tareKg: input.tareKg,
-          moisturePct: input.moisturePct,
-          netKg: net,
-          rate,
-          amountPaise,
-          status: purchaseStatus,
-          deviceSignature: input.deviceSignature ?? null,
-          deviceTimestamp: input.deviceTimestamp ? new Date(input.deviceTimestamp) : null,
-          photoUrl: input.photoUrl ?? null,
-          ocrConfidence: input.ocrWeight != null ? 0.92 : null,
-        },
-        include: { farmer: true, centre: true, crop: true },
+      const purchase = await prisma.$transaction(async (transaction) => {
+        const createdPurchase = await transaction.purchase.create({
+          data: {
+            uuid: purchaseId,
+            farmerId: input.farmerId,
+            centreId: farmer.centreId,
+            cropId: input.cropId,
+            grade: input.grade,
+            grossKg: input.grossKg,
+            tareKg: input.tareKg,
+            moisturePct: input.moisturePct,
+            netKg: net,
+            rate,
+            amountPaise,
+            status: purchaseStatus,
+            deviceSignature: input.deviceSignature ?? null,
+            deviceTimestamp: input.deviceTimestamp ? new Date(input.deviceTimestamp) : null,
+            photoUrl: ocrJob?.imageUrl ?? null,
+            ocrConfidence: ocrJob?.confidence ?? null,
+          },
+          include: { farmer: true, centre: true, crop: true },
+        });
+        if (ocrJob) {
+          await transaction.ocrJob.update({
+            where: { id: ocrJob.id },
+            data: { purchaseId: createdPurchase.id },
+          });
+        }
+        return createdPurchase;
       });
 
       const anomalies = detectAnomalies({

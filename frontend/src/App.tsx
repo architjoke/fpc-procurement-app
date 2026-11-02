@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, Route, Routes, useNavigate } from 'react-router-dom';
+import axios from 'axios';
 import { api } from './lib/api';
 import { getSession, saveSession, clearSession, type AuthSession } from './lib/session';
 import { useOfflineQueue } from './hooks/useOfflineQueue';
@@ -22,6 +23,21 @@ interface Price {
   ratePerQuintal: number;
   effectiveDate: string;
   crop: Crop;
+}
+
+interface OcrResponse {
+  data: {
+    jobId: string;
+    parsedWeight: number | null;
+    parsedMoisture: number | null;
+    confidence: number;
+    photoReference: string;
+  };
+}
+
+interface OcrFailure {
+  code?: string;
+  message?: string;
 }
 
 const Home = () => (
@@ -115,6 +131,21 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [photoPreview, setPhotoPreview] = useState('');
+  const [ocrJobId, setOcrJobId] = useState('');
+  const [ocrWeight, setOcrWeight] = useState<number | undefined>();
+  const [ocrMoisture, setOcrMoisture] = useState<number | undefined>();
+  const [ocrConfidence, setOcrConfidence] = useState<number | undefined>();
+  const [weightConfirmed, setWeightConfirmed] = useState(false);
+  const [moistureConfirmed, setMoistureConfirmed] = useState(false);
+  const [ocrMessage, setOcrMessage] = useState('');
+  const [ocrLoading, setOcrLoading] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (photoPreview) URL.revokeObjectURL(photoPreview);
+    };
+  }, [photoPreview]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -196,12 +227,69 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
   }, [prices]);
   const selectedPrice = activePrices.find((price) => `${price.cropId}:${price.grade}` === priceId);
 
+  const handleImageSelected = async (file?: File) => {
+    if (!file) return;
+    setError('');
+    setNotice('');
+    setOcrMessage('');
+    setOcrJobId('');
+    setOcrWeight(undefined);
+    setOcrMoisture(undefined);
+    setOcrConfidence(undefined);
+    setWeightConfirmed(false);
+    setMoistureConfirmed(false);
+    setPhotoPreview(URL.createObjectURL(file));
+    setOcrLoading(true);
+
+    const formData = new FormData();
+    formData.append('image', file);
+    try {
+      const { data } = await api.post<OcrResponse>('/ocr/parse', formData);
+      setOcrJobId(data.data.jobId);
+      setOcrWeight(data.data.parsedWeight ?? undefined);
+      setOcrMoisture(data.data.parsedMoisture ?? undefined);
+      setOcrConfidence(data.data.confidence);
+      if (data.data.parsedWeight !== null) setGrossKg(String(data.data.parsedWeight));
+      if (data.data.parsedMoisture !== null) setMoisturePct(String(data.data.parsedMoisture));
+      setOcrMessage('Review and explicitly confirm each OCR-prefilled value.');
+    } catch (ocrError) {
+      const failure: OcrFailure | undefined =
+        axios.isAxiosError(ocrError) && ocrError.response?.data
+          ? (ocrError.response.data as OcrFailure)
+          : undefined;
+      if (failure?.code?.startsWith('OCR_')) {
+        setOcrMessage(failure.message ?? 'Could not read image, please enter manually.');
+      } else {
+        setOcrMessage('Could not read image, please enter manually.');
+      }
+    } finally {
+      setOcrLoading(false);
+    }
+  };
+
+  const weightDiffers = ocrWeight !== undefined && Math.abs(Number(grossKg) - ocrWeight) > 0.0001;
+  const moistureDiffers =
+    ocrMoisture !== undefined && Math.abs(Number(moisturePct) - ocrMoisture) > 0.0001;
+  const ocrNeedsConfirmation =
+    (ocrWeight !== undefined && !weightConfirmed) ||
+    (ocrMoisture !== undefined && !moistureConfirmed);
+  const ocrUnreconciled =
+    (weightDiffers && !weightConfirmed) || (moistureDiffers && !moistureConfirmed);
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError('');
     setNotice('');
     if (!selectedPrice || !farmerId) {
       setError('Select a farmer and a current crop price before saving.');
+      return;
+    }
+    if (ocrNeedsConfirmation || ocrUnreconciled) {
+      setError(
+        ocrUnreconciled
+          ? 'Value differs from OCR reading, please reconcile.'
+          : 'Confirm each OCR-prefilled value before saving.',
+      );
       return;
     }
     try {
@@ -213,13 +301,36 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
         tareKg: Number(tareKg),
         moisturePct: Number(moisturePct),
         ratePerQuintal: selectedPrice.ratePerQuintal,
+        ...(ocrJobId ? { ocrJobId } : {}),
+        ...(ocrWeight !== undefined ? { ocrWeight } : {}),
+        ...(ocrMoisture !== undefined ? { ocrMoisture } : {}),
+        ...(weightDiffers ? { ocrWeightReconciled: weightConfirmed } : {}),
+        ...(moistureDiffers ? { ocrMoistureReconciled: moistureConfirmed } : {}),
       });
       setNotice(result === 'QUEUED' ? 'Saved securely for offline sync.' : 'Purchase saved.');
       setGrossKg('');
       setTareKg('');
       setMoisturePct('');
+      setOcrJobId('');
+      setOcrWeight(undefined);
+      setOcrMoisture(undefined);
+      setOcrConfidence(undefined);
+      setWeightConfirmed(false);
+      setMoistureConfirmed(false);
+      setPhotoPreview('');
+      setOcrMessage('');
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Unable to save purchase.');
+      const failure: OcrFailure | undefined =
+        axios.isAxiosError(submitError) && submitError.response?.data
+          ? (submitError.response.data as OcrFailure)
+          : undefined;
+      setError(
+        failure?.code === 'OCR_MISMATCH'
+          ? (failure.message ?? 'Value differs from OCR reading, please reconcile.')
+          : submitError instanceof Error
+            ? submitError.message
+            : 'Unable to save purchase.',
+      );
     }
   };
 
@@ -263,6 +374,16 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
           <p>Loading farmers and prices…</p>
         ) : (
           <form className="form-grid" onSubmit={(event) => void handleSubmit(event)}>
+            <label className="full-span">
+              Scale or moisture photo
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(event) => void handleImageSelected(event.target.files?.[0])}
+                disabled={ocrLoading}
+              />
+            </label>
             <label>
               Farmer
               <select
@@ -292,17 +413,98 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
                 ))}
               </select>
             </label>
-            <label>
-              Gross weight (kg)
-              <input
-                type="number"
-                step="0.1"
-                min="0.1"
-                value={grossKg}
-                onChange={(event) => setGrossKg(event.target.value)}
-                required
-              />
-            </label>
+            <div
+              className={
+                photoPreview
+                  ? 'ocr-capture-group full-span with-photo'
+                  : 'ocr-capture-group full-span'
+              }
+            >
+              {photoPreview && (
+                <div className="ocr-photo">
+                  <img src={photoPreview} alt="Uploaded scale or moisture reading" />
+                  <div>
+                    {ocrLoading ? (
+                      <p>Reading image…</p>
+                    ) : (
+                      <>
+                        {ocrMessage && <p role="status">{ocrMessage}</p>}
+                        {ocrConfidence !== undefined && (
+                          <small>OCR confidence: {Math.round(ocrConfidence * 100)}%</small>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+              <div className="ocr-reading-inputs">
+                <div className="ocr-value-field">
+                  <label htmlFor="gross-weight">Gross weight (kg)</label>
+                  <input
+                    id="gross-weight"
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    value={grossKg}
+                    onChange={(event) => {
+                      setGrossKg(event.target.value);
+                      setWeightConfirmed(false);
+                    }}
+                    required
+                  />
+                  {ocrWeight !== undefined && (
+                    <label className="ocr-confirm">
+                      <input
+                        type="checkbox"
+                        checked={weightConfirmed}
+                        onChange={(event) => setWeightConfirmed(event.target.checked)}
+                      />
+                      {weightDiffers
+                        ? 'I reconciled the entered weight with the OCR reading'
+                        : 'I confirm the OCR-prefilled weight'}
+                    </label>
+                  )}
+                  {weightDiffers && !weightConfirmed && (
+                    <small className="error">
+                      Value differs from OCR reading, please reconcile.
+                    </small>
+                  )}
+                </div>
+                <div className="ocr-value-field">
+                  <label htmlFor="moisture-percent">Moisture (%)</label>
+                  <input
+                    id="moisture-percent"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="100"
+                    value={moisturePct}
+                    onChange={(event) => {
+                      setMoisturePct(event.target.value);
+                      setMoistureConfirmed(false);
+                    }}
+                    required
+                  />
+                  {ocrMoisture !== undefined && (
+                    <label className="ocr-confirm">
+                      <input
+                        type="checkbox"
+                        checked={moistureConfirmed}
+                        onChange={(event) => setMoistureConfirmed(event.target.checked)}
+                      />
+                      {moistureDiffers
+                        ? 'I reconciled the entered moisture with the OCR reading'
+                        : 'I confirm the OCR-prefilled moisture'}
+                    </label>
+                  )}
+                  {moistureDiffers && !moistureConfirmed && (
+                    <small className="error">
+                      Value differs from OCR reading, please reconcile.
+                    </small>
+                  )}
+                </div>
+              </div>
+            </div>
             <label>
               Tare weight (kg)
               <input
@@ -311,18 +513,6 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
                 min="0"
                 value={tareKg}
                 onChange={(event) => setTareKg(event.target.value)}
-                required
-              />
-            </label>
-            <label>
-              Moisture (%)
-              <input
-                type="number"
-                step="0.1"
-                min="0"
-                max="100"
-                value={moisturePct}
-                onChange={(event) => setMoisturePct(event.target.value)}
                 required
               />
             </label>

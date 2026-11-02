@@ -34,6 +34,7 @@ const mockedPrisma = vi.hoisted(() => ({
     findUnique: vi.fn(),
     update: vi.fn(),
   },
+  ocrJob: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
   smsOutbox: { create: vi.fn() },
   auditTrail: { create: vi.fn(), findFirst: vi.fn() },
   syncLog: { create: vi.fn() },
@@ -47,26 +48,16 @@ vi.mock('../config/database.js', () => ({
   prisma: mockedPrisma,
 }));
 
-vi.mock('../services/ocr.js', () => ({
-  OcrSpaceProvider: class {
-    async parseImage() {
-      return {
-        weight: null,
-        moisture: null,
-        confidence: 0,
-        rawText: 'OCR offline unavailable',
-        source: 'fallback',
-      };
-    }
-  },
-}));
-
 const { app } = await import('../server.js');
 
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.JWT_SECRET = 'test-secret';
   process.env.JWT_REFRESH_SECRET = 'test-refresh-secret';
+  process.env.OCR_PROVIDER = 'mock';
+  process.env.OCR_MOCK_TEXT = '';
+  process.env.OCR_MOCK_CONFIDENCE = '0';
+  process.env.OCR_MOCK_FAIL = 'false';
   mockedPrisma.$transaction.mockImplementation((callback) => callback(mockedPrisma));
 });
 
@@ -778,7 +769,90 @@ describe('API flows', () => {
       });
 
     expect(response.status).toBe(400);
-    expect(response.body.message).toContain('OCR value differs');
+    expect(response.body.code).toBe('OCR_MISMATCH');
+    expect(response.body.message).toContain('reconcile');
+  });
+
+  it('checks typed values against stored OCR readings even when the client omits the prefill', async () => {
+    const token = createOperatorToken();
+    mockedPrisma.ocrJob.findFirst.mockResolvedValue({
+      id: 'ocr-job-1',
+      parsedWeight: 1250,
+      parsedMoisture: 11.5,
+      confidence: 0.91,
+      imageUrl: 'sha256:abc123',
+    });
+
+    const response = await request(app).post('/api/v1/purchases').set(syncHeaders(token)).send({
+      farmerId: 'farmer-1',
+      cropId: 'crop-1',
+      grade: 'A',
+      grossKg: 1200,
+      tareKg: 18,
+      moisturePct: 11.5,
+      ocrJobId: 'ocr-job-1',
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe('OCR_MISMATCH');
+    expect(mockedPrisma.purchase.create).not.toHaveBeenCalled();
+  });
+
+  it('creates a purchase with confidence and photo reference from its OCR job', async () => {
+    const token = createOperatorToken();
+    const job = {
+      id: 'ocr-job-1',
+      operatorId: 'operator-1',
+      status: 'COMPLETED',
+      parsedWeight: 1250,
+      parsedMoisture: 11.5,
+      confidence: 0.91,
+      imageUrl: 'sha256:abc123',
+    };
+    mockedPrisma.ocrJob.findFirst.mockResolvedValue(job);
+    mockedPrisma.ocrJob.update.mockResolvedValue({ ...job, purchaseId: 'purchase-ocr-1' });
+    mockedPrisma.farmer.findFirst.mockResolvedValue({
+      id: 'farmer-1',
+      memberId: 'F-1001',
+      name: 'Sunil Jadhav',
+      centreId: 'centre-1',
+      centre: { code: 'C07' },
+      landAcres: 3,
+    });
+    mockedPrisma.crop.findUnique.mockResolvedValue({ id: 'crop-1', name: 'Soybean', unit: 'kg' });
+    mockedPrisma.priceBoard.findFirst.mockResolvedValue({ ratePerQuintal: 4850 });
+    mockedPrisma.purchase.findMany.mockResolvedValue([]);
+    mockedPrisma.purchase.create.mockImplementation(({ data }) =>
+      Promise.resolve({ id: 'purchase-ocr-1', ...data }),
+    );
+    mockedPrisma.smsOutbox.create.mockResolvedValue({ id: 'sms-1' });
+
+    const response = await request(app).post('/api/v1/purchases').set(syncHeaders(token)).send({
+      farmerId: 'farmer-1',
+      cropId: 'crop-1',
+      grade: 'A',
+      grossKg: 1240,
+      tareKg: 18,
+      moisturePct: 11.5,
+      ocrJobId: job.id,
+      ocrWeight: 1250,
+      ocrMoisture: 11.5,
+      ocrWeightReconciled: true,
+    });
+
+    expect(response.status).toBe(201);
+    expect(mockedPrisma.purchase.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          ocrConfidence: 0.91,
+          photoUrl: 'sha256:abc123',
+        }),
+      }),
+    );
+    expect(mockedPrisma.ocrJob.update).toHaveBeenCalledWith({
+      where: { id: job.id },
+      data: { purchaseId: 'purchase-ocr-1' },
+    });
   });
 
   it('creates online purchases with exact seed-row net weights and paisa amounts', async () => {
@@ -1143,15 +1217,93 @@ describe('API flows', () => {
       { expiresIn: '1h' },
     );
 
+    mockedPrisma.ocrJob.create.mockResolvedValue({ id: 'ocr-failed-1' });
     const response = await request(app)
       .post('/api/v1/ocr/parse')
       .set('Authorization', `Bearer ${token}`)
-      .attach('image', Buffer.from('not-a-real-image'), {
-        filename: 'test.jpg',
-        contentType: 'image/jpeg',
+      .attach('image', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), {
+        filename: 'test.png',
+        contentType: 'image/png',
+      });
+
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe('OCR_UNREADABLE');
+    expect(response.body.message).toContain('enter manually');
+  });
+
+  it('parses image text, persists a completed job, and returns parsed readings', async () => {
+    const token = createOperatorToken();
+    process.env.OCR_MOCK_TEXT = 'Gross weight: 1250 kg\nMoisture: 12,5%';
+    process.env.OCR_MOCK_CONFIDENCE = '0.91';
+    mockedPrisma.ocrJob.create.mockResolvedValue({ id: 'ocr-job-success' });
+
+    const response = await request(app)
+      .post('/api/v1/ocr/parse')
+      .set(syncHeaders(token))
+      .attach('image', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), {
+        filename: 'test.png',
+        contentType: 'image/png',
       });
 
     expect(response.status).toBe(200);
-    expect(response.body.message).toContain('OCR');
+    expect(response.body.data).toMatchObject({
+      jobId: 'ocr-job-success',
+      parsedWeight: 1250,
+      parsedMoisture: 12.5,
+      confidence: 0.91,
+    });
+    expect(mockedPrisma.ocrJob.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          operatorId: 'operator-1',
+          rawOcrText: 'Gross weight: 1250 kg\nMoisture: 12,5%',
+          status: 'COMPLETED',
+        }),
+      }),
+    );
+  });
+
+  it('returns a graceful OCR_UNAVAILABLE response when the provider throws', async () => {
+    const token = createOperatorToken();
+    process.env.OCR_MOCK_FAIL = 'true';
+    mockedPrisma.ocrJob.create.mockResolvedValue({ id: 'ocr-provider-failed' });
+
+    const response = await request(app)
+      .post('/api/v1/ocr/parse')
+      .set(syncHeaders(token))
+      .attach('image', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), {
+        filename: 'test.png',
+        contentType: 'image/png',
+      });
+
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe('OCR_UNAVAILABLE');
+    expect(response.body.data.jobId).toBe('ocr-provider-failed');
+    expect(mockedPrisma.ocrJob.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'FAILED' }) }),
+    );
+  });
+
+  it('rejects uploads over 1 MB and non-image content', async () => {
+    const token = createOperatorToken();
+    const tooLarge = await request(app)
+      .post('/api/v1/ocr/parse')
+      .set(syncHeaders(token))
+      .attach('image', Buffer.alloc(1024 * 1024 + 1, 0), {
+        filename: 'large.png',
+        contentType: 'image/png',
+      });
+    expect(tooLarge.status).toBe(413);
+    expect(tooLarge.body.code).toBe('OCR_IMAGE_TOO_LARGE');
+
+    const invalid = await request(app)
+      .post('/api/v1/ocr/parse')
+      .set(syncHeaders(token))
+      .attach('image', Buffer.from('not an image'), {
+        filename: 'not-image.txt',
+        contentType: 'text/plain',
+      });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.code).toBe('OCR_INVALID_UPLOAD');
   });
 });

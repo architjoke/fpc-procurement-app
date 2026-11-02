@@ -14,6 +14,11 @@ export interface QueuedPurchase {
   device_timestamp: string;
   nonce: string;
   rate_per_quintal: number;
+  ocr_job_id?: string;
+  ocr_weight?: number;
+  ocr_moisture?: number;
+  ocr_weight_reconciled?: boolean;
+  ocr_moisture_reconciled?: boolean;
   hmac_signature: string;
   syncStatus: QueueStatus;
   createdAt: string;

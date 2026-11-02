@@ -6,6 +6,7 @@ import { prisma } from '../config/database.js';
 import { requireAuth, requireRole, type AuthenticatedRequest } from '../middleware/auth.js';
 import { calculateAmountPaisa, calculateNetWeightKg } from '../utils/calculations.js';
 import { verifySyncPurchaseSignature, type SyncPurchasePayload } from '../utils/hmac.js';
+import { getOcrMismatchFields } from '../services/purchaseOcr.js';
 
 const router = Router();
 const nonceTtlMs = 24 * 60 * 60 * 1000;
@@ -23,6 +24,11 @@ const queuedPurchaseSchema = z
     device_timestamp: z.string().datetime({ offset: true }),
     nonce: z.string().uuid(),
     rate_per_quintal: z.number().int().positive().finite(),
+    ocr_job_id: z.string().min(1).optional(),
+    ocr_weight: z.number().positive().finite().optional(),
+    ocr_moisture: z.number().min(0).max(100).finite().optional(),
+    ocr_weight_reconciled: z.boolean().optional(),
+    ocr_moisture_reconciled: z.boolean().optional(),
     hmac_signature: z.string().regex(/^[a-f0-9]{64}$/i),
   })
   .strict()
@@ -173,6 +179,92 @@ router.post(
                 return { status: 'REJECTED' as const, reason };
               }
 
+              const hasOcrData =
+                item.ocr_job_id !== undefined ||
+                item.ocr_weight !== undefined ||
+                item.ocr_moisture !== undefined;
+              const ocrJob =
+                hasOcrData && item.ocr_job_id
+                  ? await transaction.ocrJob.findFirst({
+                      where: {
+                        id: item.ocr_job_id,
+                        operatorId: req.user!.id,
+                        status: 'COMPLETED',
+                      },
+                    })
+                  : null;
+              if (item.ocr_job_id && !ocrJob) {
+                const reason =
+                  'OCR_JOB_INVALID: scan is unavailable; capture the purchase manually.';
+                await transaction.syncLog.create({
+                  data: { purchaseUuid: item.uuid, deviceId, status: 'REJECTED', reason },
+                });
+                return { status: 'REJECTED' as const, reason };
+              }
+              if (!ocrJob && hasOcrData) {
+                const clientMismatches = getOcrMismatchFields({
+                  grossKg: item.gross_kg,
+                  moisturePct: item.moisture_pct,
+                  ...(item.ocr_weight !== undefined ? { ocrWeight: item.ocr_weight } : {}),
+                  ...(item.ocr_moisture !== undefined ? { ocrMoisture: item.ocr_moisture } : {}),
+                  ...(item.ocr_weight_reconciled !== undefined
+                    ? { ocrWeightReconciled: item.ocr_weight_reconciled }
+                    : {}),
+                  ...(item.ocr_moisture_reconciled !== undefined
+                    ? { ocrMoistureReconciled: item.ocr_moisture_reconciled }
+                    : {}),
+                });
+                const reason =
+                  clientMismatches.length > 0
+                    ? `OCR_MISMATCH: reconcile ${clientMismatches.join(', ')} before saving.`
+                    : 'OCR_JOB_INVALID: scan is unavailable; capture the purchase manually.';
+                await transaction.syncLog.create({
+                  data: { purchaseUuid: item.uuid, deviceId, status: 'REJECTED', reason },
+                });
+                return { status: 'REJECTED' as const, reason };
+              }
+              if (
+                ocrJob &&
+                ((item.ocr_weight !== undefined &&
+                  (ocrJob.parsedWeight === null ||
+                    Math.abs(Number(ocrJob.parsedWeight) - item.ocr_weight) > 0.0001)) ||
+                  (item.ocr_moisture !== undefined &&
+                    (ocrJob.parsedMoisture === null ||
+                      Math.abs(Number(ocrJob.parsedMoisture) - item.ocr_moisture) > 0.0001)))
+              ) {
+                const reason =
+                  'OCR_JOB_MISMATCH: submitted OCR values do not match the stored scan.';
+                await transaction.syncLog.create({
+                  data: { purchaseUuid: item.uuid, deviceId, status: 'REJECTED', reason },
+                });
+                return { status: 'REJECTED' as const, reason };
+              }
+              if (ocrJob) {
+                const ocrMismatches = getOcrMismatchFields({
+                  grossKg: item.gross_kg,
+                  moisturePct: item.moisture_pct,
+                  ...(ocrJob.parsedWeight !== null
+                    ? { ocrWeight: Number(ocrJob.parsedWeight) }
+                    : {}),
+                  ...(ocrJob.parsedMoisture !== null
+                    ? { ocrMoisture: Number(ocrJob.parsedMoisture) }
+                    : {}),
+                  ...(item.ocr_weight_reconciled !== undefined
+                    ? { ocrWeightReconciled: item.ocr_weight_reconciled }
+                    : {}),
+                  ...(item.ocr_moisture_reconciled !== undefined
+                    ? { ocrMoistureReconciled: item.ocr_moisture_reconciled }
+                    : {}),
+                });
+                if (ocrMismatches.length > 0) {
+                  const reason = `OCR_MISMATCH: reconcile ${ocrMismatches.join(', ')} before saving.`;
+                  await transaction.syncLog.create({
+                    data: { purchaseUuid: item.uuid, deviceId, status: 'REJECTED', reason },
+                  });
+                  return { status: 'REJECTED' as const, reason };
+                }
+              }
+
               const crop = await transaction.crop.findUnique({
                 where: { id: item.crop_id },
               });
@@ -263,8 +355,16 @@ router.post(
                   status: purchaseStatus,
                   deviceSignature: item.hmac_signature,
                   deviceTimestamp: timestamp,
+                  ocrConfidence: ocrJob?.confidence ?? null,
+                  photoUrl: ocrJob?.imageUrl ?? null,
                 },
               });
+              if (ocrJob) {
+                await transaction.ocrJob.update({
+                  where: { id: ocrJob.id },
+                  data: { purchaseId: purchase.id },
+                });
+              }
 
               if (conflicts.length > 0) {
                 await transaction.auditTrail.create({
