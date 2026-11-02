@@ -29,6 +29,7 @@ export interface SyncHistoryEntry {
   uuid: string;
   status: 'SYNCED';
   purchaseStatus: 'SYNCED' | 'FLAGGED';
+  purchaseId?: string;
   reason?: string;
   updatedAt: string;
 }

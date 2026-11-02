@@ -321,6 +321,25 @@ select {
   margin-top: 0.2rem;
   color: #6b7280;
 }
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.55);
+}
+.sms-preview {
+  width: min(100%, 620px);
+}
+.sms-preview-message {
+  padding: 1rem;
+  border-radius: 10px;
+  background: #f5f7fb;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .error {
   color: #a12622;
 }

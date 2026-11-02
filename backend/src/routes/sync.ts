@@ -8,6 +8,7 @@ import { calculateAmountPaisa, calculateNetWeightKg } from '../utils/calculation
 import { verifySyncPurchaseSignature, type SyncPurchasePayload } from '../utils/hmac.js';
 import { getOcrMismatchFields } from '../services/purchaseOcr.js';
 import { detectAnomalies, getUtcDayRange } from '../services/anomaly.js';
+import { generateAndStoreSmsSlip } from '../services/sms.js';
 
 const router = Router();
 const nonceTtlMs = 24 * 60 * 60 * 1000;
@@ -113,6 +114,7 @@ router.post(
         uuid: string;
         status: 'SYNCED' | 'REJECTED';
         purchase_status?: 'SYNCED' | 'FLAGGED';
+        purchase_id?: string;
         reason?: string;
       }> = [];
 
@@ -171,7 +173,13 @@ router.post(
 
               const farmer = await transaction.farmer.findFirst({
                 where: { id: item.farmer_id, centreId: req.user!.centreId },
-                select: { id: true, centreId: true, landAcres: true },
+                select: {
+                  id: true,
+                  name: true,
+                  centreId: true,
+                  landAcres: true,
+                  centre: { select: { code: true } },
+                },
               });
               if (!farmer) {
                 const reason = 'Farmer does not belong to this centre.';
@@ -396,6 +404,30 @@ router.post(
                   data: { purchaseId: purchase.id },
                 });
               }
+              await generateAndStoreSmsSlip(
+                {
+                  purchaseId: purchase.id,
+                  slipNo: item.uuid,
+                  status: purchase.status,
+                  farmerName: farmer.name,
+                  cropName: crop.name,
+                  grossKg: item.gross_kg,
+                  tareKg: item.tare_kg,
+                  moisturePct: item.moisture_pct,
+                  netKg,
+                  ratePerQuintal: item.rate_per_quintal,
+                  amountPaise,
+                  centreCode: farmer.centre.code,
+                },
+                {
+                  upsertSmsOutbox: (entry) =>
+                    transaction.smsOutbox.upsert({
+                      where: { purchaseId: entry.purchaseId },
+                      update: {},
+                      create: entry,
+                    }),
+                },
+              );
 
               if (conflicts.length > 0) {
                 await transaction.auditTrail.create({
@@ -430,6 +462,7 @@ router.post(
                 status: 'SYNCED' as const,
                 purchaseStatus:
                   purchase.status === 'FLAGGED' ? ('FLAGGED' as const) : ('SYNCED' as const),
+                purchaseId: purchase.id,
                 reason,
               };
             },
@@ -440,6 +473,7 @@ router.post(
             uuid: item.uuid,
             status: result.status,
             ...(result.status === 'SYNCED' ? { purchase_status: result.purchaseStatus } : {}),
+            ...(result.status === 'SYNCED' ? { purchase_id: result.purchaseId } : {}),
             reason: result.reason,
           });
         } catch (error) {

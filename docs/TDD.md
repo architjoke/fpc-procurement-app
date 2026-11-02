@@ -64,6 +64,9 @@ older purchases without a device timestamp use their recorded creation date.
 Managers review flagged purchases with a required reason. Approval changes `FLAGGED` to
 `APPROVED`; rejection changes it to `REJECTED`. Both decisions are written to `audit_trail`.
 Flagged purchases are excluded from payment runs and do not generate SMS slips.
+SMS slips are generated only when a purchase is created or synced with `SYNCED` status.
+Flagged purchases do not receive a slip, including if a manager later approves them; approval
+does not retroactively trigger SMS generation.
 
 ### Payment runs
 
@@ -71,6 +74,20 @@ Payment runs move through `DRAFT` -> `APPROVED` -> `EXPORTED`. Only approved pur
 are not already assigned to a run are eligible. Approval is audited; export marks the run
 `EXPORTED` and its purchases `PAID`. The downloadable CSV contains sequence number, beneficiary
 name, account number, IFSC, integer amount in paise, payment reference, and purpose code.
+
+### Marathi SMS slips
+
+The mock SMS gateway records one `SENT` row in `sms_outbox` per synced purchase. The unique
+`purchase_id` constraint and an upsert with an empty update make generation idempotent; a retry
+cannot duplicate or rewrite a previously generated slip. `GET /api/v1/sms/:purchaseId` returns
+the stored slip for preview and is restricted to the purchase's centre for operators.
+
+The exact template is:
+
+`रसीद {slip_no} | शेतकरी: {farmer_name} | {crop_name} | सकल वजन: {gross_kg} किलो | कच्चा वजन: {tare_kg} किलो | ओलावा: {moisture_pct}% | शुद्ध वजन: {net_kg} किलो | दर: ₹{rate}/क्विंटल | रक्कम: ₹{amount} | केंद्र: {centre_code}`
+
+Weights and moisture are rendered to one decimal place, the rupee amount to two decimals, and
+the stable purchase UUID is used as the slip number.
 
 ## OCR flow
 

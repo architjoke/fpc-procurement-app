@@ -13,16 +13,24 @@ router.get('/:purchaseId', requireAuth, async (req: AuthenticatedRequest, res) =
 
   const purchase = await prisma.purchase.findFirst({
     where: { id: parsedId.data, ...centreScope(req.user!) },
-    include: { farmer: true, crop: true, centre: true },
+    select: { id: true, status: true },
   });
 
   if (!purchase) {
     return res.status(404).json({ message: 'Purchase not found.' });
   }
 
-  const message = `रसीद ${purchase.farmer.memberId} | शेतकरी: ${purchase.farmer.name} | ${purchase.crop.name} | सकल वजन: ${purchase.grossKg.toNumber().toFixed(1)} किलो | कच्चा वजन: ${purchase.tareKg.toNumber().toFixed(1)} किलो | ओलावा: ${purchase.moisturePct.toNumber().toFixed(1)}% | शुद्ध वजन: ${purchase.netKg.toNumber().toFixed(1)} किलो | दर: ₹${purchase.rate}/क्विंटल | रक्कम: ₹${(purchase.amountPaise / 100).toFixed(2)} | केंद्र: ${purchase.centre.code}`;
+  const slip = await prisma.smsOutbox.findUnique({
+    where: { purchaseId: purchase.id },
+    select: { messageMarathi: true, status: true },
+  });
+  if (!slip) {
+    return res.status(409).json({
+      message: `SMS slip is not available for a ${purchase.status.toLowerCase()} purchase.`,
+    });
+  }
 
-  return res.json({ data: { message, status: 'SENT' } });
+  return res.json({ data: slip });
 });
 
 export { router as smsRouter };

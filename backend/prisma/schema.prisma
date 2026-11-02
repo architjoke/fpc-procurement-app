@@ -146,7 +146,7 @@ model Purchase {
   photoUrl        String?          @map("photo_url")
   createdAt       DateTime         @default(now()) @map("created_at")
   paymentRunItems PaymentRunItem[]
-  smsOutbox       SmsOutbox[]
+  smsOutbox       SmsOutbox?
   ocrJobs         OcrJob[]
 
   @@map("purchases")
@@ -231,7 +231,7 @@ model AuditTrail {
 
 model SmsOutbox {
   id             String    @id @default(cuid())
-  purchaseId     String    @map("purchase_id")
+  purchaseId     String    @unique @map("purchase_id")
   purchase       Purchase  @relation(fields: [purchaseId], references: [id])
   phone          String
   messageMarathi String    @map("message_marathi")

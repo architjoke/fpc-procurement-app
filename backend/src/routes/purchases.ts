@@ -8,13 +8,10 @@ import {
   requireRole,
   type AuthenticatedRequest,
 } from '../middleware/auth.js';
-import {
-  buildMarathiSmsSlip,
-  calculateAmountPaisa,
-  calculateNetWeightKg,
-} from '../utils/calculations.js';
+import { calculateAmountPaisa, calculateNetWeightKg } from '../utils/calculations.js';
 import { detectAnomalies, getUtcDayRange } from '../services/anomaly.js';
 import { getOcrMismatchFields } from '../services/purchaseOcr.js';
+import { generateAndStoreSmsSlip } from '../services/sms.js';
 
 const router = Router();
 
@@ -268,7 +265,7 @@ router.post(
           ? anomalies.map((anomaly) => `${anomaly.trigger}: ${anomaly.reason}`).join(' ')
           : null;
       const purchaseId = uuidv4();
-      const purchaseStatus = anomalies.length > 0 ? 'FLAGGED' : 'DRAFT';
+      const purchaseStatus = anomalies.length > 0 ? 'FLAGGED' : 'SYNCED';
 
       const purchase = await prisma.$transaction(async (transaction) => {
         const createdPurchase = await transaction.purchase.create({
@@ -299,6 +296,30 @@ router.post(
             data: { purchaseId: createdPurchase.id },
           });
         }
+        await generateAndStoreSmsSlip(
+          {
+            purchaseId: createdPurchase.id,
+            slipNo: purchaseId,
+            status: createdPurchase.status,
+            farmerName: farmer.name,
+            cropName: crop.name,
+            grossKg: input.grossKg,
+            tareKg: input.tareKg,
+            moisturePct: input.moisturePct,
+            netKg: net,
+            ratePerQuintal: rate,
+            amountPaise,
+            centreCode: farmer.centre.code,
+          },
+          {
+            upsertSmsOutbox: (entry) =>
+              transaction.smsOutbox.upsert({
+                where: { purchaseId: entry.purchaseId },
+                update: {},
+                create: entry,
+              }),
+          },
+        );
         return createdPurchase;
       });
 
@@ -309,7 +330,7 @@ router.post(
             action: 'flagged_purchase',
             entityType: 'purchase',
             entityId: purchase.id,
-            before: JSON.stringify({ status: 'DRAFT' }),
+            before: JSON.stringify({ status: 'SYNCED' }),
             after: JSON.stringify({ status: 'FLAGGED', reason: flagReason, reasons: anomalies }),
           },
         });
@@ -322,29 +343,7 @@ router.post(
         });
       }
 
-      const smsText = buildMarathiSmsSlip({
-        memberId: farmer.memberId,
-        farmerName: farmer.name,
-        cropName: crop.name,
-        grossKg: input.grossKg,
-        tareKg: input.tareKg,
-        moisturePct: input.moisturePct,
-        netKg: net,
-        ratePerQuintal: rate,
-        amountPaise: amountPaise,
-        centreCode: farmer.centre.code,
-      });
-
-      await prisma.smsOutbox.create({
-        data: {
-          purchaseId: purchase.id,
-          phone: '0000000000',
-          messageMarathi: smsText,
-          status: 'QUEUED',
-        },
-      });
-
-      return res.status(201).json({ data: purchase, message: 'Purchase created.' });
+      return res.status(201).json({ data: purchase, message: 'Purchase synced.' });
     } catch (error) {
       if (error instanceof RangeError) {
         return res.status(400).json({ message: error.message });

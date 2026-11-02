@@ -24,6 +24,7 @@ export interface PurchaseDraft {
 export interface SyncStatusEntry {
   uuid: string;
   status: 'QUEUED' | 'SYNCING' | 'SYNCED' | 'REJECTED' | 'FLAGGED';
+  purchaseId?: string;
   reason?: string;
 }
 
@@ -32,6 +33,7 @@ interface SyncResponse {
     uuid: string;
     status: 'SYNCED' | 'REJECTED';
     purchase_status?: 'SYNCED' | 'FLAGGED';
+    purchase_id?: string;
     reason?: string;
   }>;
 }
@@ -91,6 +93,7 @@ const readStatuses = async (): Promise<SyncStatusEntry[]> => {
     ...history.map((entry: SyncHistoryEntry) => ({
       uuid: entry.uuid,
       status: entry.purchaseStatus === 'FLAGGED' ? ('FLAGGED' as const) : entry.status,
+      ...(entry.purchaseId ? { purchaseId: entry.purchaseId } : {}),
       reason:
         entry.purchaseStatus === 'FLAGGED'
           ? (entry.reason ?? 'Synced and flagged for manager review.')
@@ -225,6 +228,7 @@ export const useOfflineQueue = () => {
                   uuid: queuedEntry.uuid,
                   status: 'SYNCED',
                   purchaseStatus: result.purchase_status ?? 'SYNCED',
+                  ...(result.purchase_id ? { purchaseId: result.purchase_id } : {}),
                   reason: result.reason,
                   updatedAt: new Date().toISOString(),
                 });
@@ -258,7 +262,11 @@ export const useOfflineQueue = () => {
   const createPurchase = useCallback(
     async (
       draft: PurchaseDraft,
-    ): Promise<{ status: 'SAVED' | 'QUEUED' | 'FLAGGED'; flagReason?: string }> => {
+    ): Promise<{
+      status: 'SAVED' | 'QUEUED' | 'FLAGGED';
+      purchaseId?: string;
+      flagReason?: string;
+    }> => {
       setError(null);
       const session = getSession();
       if (!session?.accessToken || !session.user.centreId) {
@@ -274,7 +282,7 @@ export const useOfflineQueue = () => {
 
       try {
         const response = await api.post<{
-          data: { status: string; flagReason?: string | null };
+          data: { id: string; status: string; flagReason?: string | null };
         }>('/purchases', {
           farmerId: draft.farmerId,
           cropId: draft.cropId,
@@ -299,7 +307,7 @@ export const useOfflineQueue = () => {
                 ? { flagReason: response.data.data.flagReason }
                 : {}),
             }
-          : { status: 'SAVED' };
+          : { status: 'SAVED', purchaseId: response.data.data.id };
       } catch (requestError) {
         if (!axios.isAxiosError(requestError)) {
           throw requestError;

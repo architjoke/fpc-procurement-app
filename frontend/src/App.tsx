@@ -673,6 +673,12 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [flaggedReason, setFlaggedReason] = useState('');
+  const [smsPurchaseId, setSmsPurchaseId] = useState('');
+  const [smsPreviewOpen, setSmsPreviewOpen] = useState(false);
+  const [smsMessage, setSmsMessage] = useState('');
+  const [smsError, setSmsError] = useState('');
+  const [smsLoading, setSmsLoading] = useState(false);
+  const [smsCopied, setSmsCopied] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [photoPreview, setPhotoPreview] = useState('');
   const [ocrJobId, setOcrJobId] = useState('');
@@ -819,6 +825,39 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
   const ocrUnreconciled =
     (weightDiffers && !weightConfirmed) || (moistureDiffers && !moistureConfirmed);
 
+  const openSmsSlip = async (purchaseId: string) => {
+    setSmsPreviewOpen(true);
+    setSmsLoading(true);
+    setSmsError('');
+    setSmsMessage('');
+    setSmsCopied(false);
+    try {
+      const { data } = await api.get<{
+        data: { messageMarathi: string; status: string };
+      }>(`/sms/${encodeURIComponent(purchaseId)}`);
+      setSmsMessage(data.data.messageMarathi);
+    } catch (previewError) {
+      setSmsError(
+        axios.isAxiosError(previewError) && previewError.response?.data?.message
+          ? String(previewError.response.data.message)
+          : 'Unable to load the SMS slip.',
+      );
+    } finally {
+      setSmsLoading(false);
+    }
+  };
+
+  const copySmsSlip = async () => {
+    try {
+      await navigator.clipboard.writeText(smsMessage);
+      setSmsCopied(true);
+      setSmsError('');
+    } catch (copyError) {
+      console.error('Unable to copy SMS slip:', copyError);
+      setSmsError('Could not copy the slip. Select and copy the text manually.');
+    }
+  };
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError('');
@@ -850,6 +889,7 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
         ...(weightDiffers ? { ocrWeightReconciled: weightConfirmed } : {}),
         ...(moistureDiffers ? { ocrMoistureReconciled: moistureConfirmed } : {}),
       });
+      setSmsPurchaseId(result.status === 'SAVED' ? (result.purchaseId ?? '') : '');
       setNotice(
         result.status === 'QUEUED'
           ? 'Saved securely for offline sync.'
@@ -1081,6 +1121,15 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
                 {notice}
               </p>
             )}
+            {smsPurchaseId && (
+              <button
+                type="button"
+                className="button secondary full-span"
+                onClick={() => void openSmsSlip(smsPurchaseId)}
+              >
+                View SMS Slip
+              </button>
+            )}
             <button type="submit" className="button primary full-span" disabled={loading}>
               Save purchase
             </button>
@@ -1118,11 +1167,63 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
                     Retry
                   </button>
                 )}
+                {entry.status === 'SYNCED' && entry.purchaseId && (
+                  <button
+                    className="text-button"
+                    onClick={() => {
+                      if (entry.purchaseId) void openSmsSlip(entry.purchaseId);
+                    }}
+                  >
+                    View SMS Slip
+                  </button>
+                )}
               </li>
             ))}
           </ul>
         )}
       </section>
+      {smsPreviewOpen && (
+        <div className="modal-backdrop" onClick={() => setSmsPreviewOpen(false)}>
+          <section
+            className="card sms-preview"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sms-preview-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="section-heading">
+              <h2 id="sms-preview-title">SMS Slip Preview</h2>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setSmsPreviewOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            {smsLoading ? (
+              <p>Loading SMS slip…</p>
+            ) : smsError ? (
+              <p className="error" role="alert">
+                {smsError}
+              </p>
+            ) : (
+              <>
+                <p className="sms-preview-message" lang="mr">
+                  {smsMessage}
+                </p>
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => void copySmsSlip()}
+                >
+                  {smsCopied ? 'Copied' : 'Copy'}
+                </button>
+              </>
+            )}
+          </section>
+        </div>
+      )}
     </main>
   );
 };

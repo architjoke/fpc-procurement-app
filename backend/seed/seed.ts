@@ -1,6 +1,10 @@
 import bcrypt from 'bcryptjs';
 import { Prisma, PrismaClient } from '@prisma/client';
-import { calculateAmountPaisa, calculateNetWeightKg } from '../src/utils/calculations.js';
+import {
+  buildMarathiSmsSlip,
+  calculateAmountPaisa,
+  calculateNetWeightKg,
+} from '../src/utils/calculations.js';
 
 const prisma = new PrismaClient();
 
@@ -336,8 +340,20 @@ async function main() {
       data: {
         purchaseId: purchase.id,
         phone: '+919876543210',
-        messageMarathi: `रसीद ${purchase.farmer.memberId} | शेतकरी: ${purchase.farmer.name} | ${purchase.crop.name} | सकल वजन: ${purchase.grossKg.toString()} किलो | कच्चा वजन: ${purchase.tareKg.toString()} किलो | ओलावा: ${purchase.moisturePct.toString()}% | शुद्ध वजन: ${purchase.netKg.toString()} किलो | दर: ₹${purchase.rate}/क्विंटल | रक्कम: ₹${(purchase.amountPaise / 100).toFixed(2)} | केंद्र: ${purchase.centre.code}`,
+        messageMarathi: buildMarathiSmsSlip({
+          slipNo: purchase.uuid,
+          farmerName: purchase.farmer.name,
+          cropName: purchase.crop.name,
+          grossKg: purchase.grossKg.toNumber(),
+          tareKg: purchase.tareKg.toNumber(),
+          moisturePct: purchase.moisturePct.toNumber(),
+          netKg: purchase.netKg.toNumber(),
+          ratePerQuintal: purchase.rate,
+          amountPaise: purchase.amountPaise,
+          centreCode: purchase.centre.code,
+        }),
         status: 'SENT',
+        sentAt: new Date(),
       },
     });
   }

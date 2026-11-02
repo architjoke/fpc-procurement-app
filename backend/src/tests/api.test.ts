@@ -37,7 +37,7 @@ const mockedPrisma = vi.hoisted(() => ({
     updateMany: vi.fn(),
   },
   ocrJob: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
-  smsOutbox: { create: vi.fn() },
+  smsOutbox: { create: vi.fn(), upsert: vi.fn(), findUnique: vi.fn() },
   auditTrail: { create: vi.fn(), findFirst: vi.fn() },
   syncLog: { create: vi.fn() },
   paymentRun: {
@@ -69,6 +69,7 @@ beforeEach(() => {
   process.env.OCR_MOCK_FAIL = 'false';
   mockedPrisma.$transaction.mockImplementation((callback) => callback(mockedPrisma));
   mockedPrisma.purchase.findMany.mockResolvedValue([]);
+  mockedPrisma.smsOutbox.upsert.mockResolvedValue({ id: 'sms-1' });
 });
 
 const testDeviceSecret = 'test-device-secret';
@@ -579,8 +580,10 @@ describe('API flows', () => {
     mockedPrisma.deviceSession.updateMany.mockResolvedValue({ count: 1 });
     mockedPrisma.farmer.findFirst.mockResolvedValue({
       id: 'farmer-1',
+      name: 'Sunil Jadhav',
       centreId: 'centre-1',
       landAcres: 2,
+      centre: { code: 'C07' },
     });
     mockedPrisma.crop.findUnique.mockResolvedValue({ id: 'soybean', name: 'Soybean' });
     mockedPrisma.priceBoard.findFirst.mockResolvedValue({ ratePerQuintal: 4850 });
@@ -598,7 +601,12 @@ describe('API flows', () => {
     expect(response.status).toBe(200);
     expect(response.body.accepted).toEqual([item.uuid]);
     expect(response.body.results).toEqual([
-      expect.objectContaining({ uuid: item.uuid, status: 'SYNCED', purchase_status: 'SYNCED' }),
+      expect.objectContaining({
+        uuid: item.uuid,
+        status: 'SYNCED',
+        purchase_status: 'SYNCED',
+        purchase_id: 'purchase-sync-1',
+      }),
     ]);
     expect(mockedPrisma.purchase.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -614,6 +622,16 @@ describe('API flows', () => {
     expect(mockedPrisma.syncLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ purchaseUuid: item.uuid, status: 'ACCEPTED' }),
+      }),
+    );
+    expect(mockedPrisma.smsOutbox.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { purchaseId: 'purchase-sync-1' },
+        create: expect.objectContaining({
+          purchaseId: 'purchase-sync-1',
+          status: 'SENT',
+          messageMarathi: expect.stringContaining('रसीद'),
+        }),
       }),
     );
   });
@@ -676,7 +694,13 @@ describe('API flows', () => {
     mockedPrisma.syncNonce.findUnique.mockResolvedValue(null);
     mockedPrisma.syncNonce.create.mockResolvedValue({ id: 'nonce-1' });
     mockedPrisma.deviceSession.updateMany.mockResolvedValue({ count: 1 });
-    mockedPrisma.farmer.findFirst.mockResolvedValue({ id: 'farmer-1', centreId: 'centre-1' });
+    mockedPrisma.farmer.findFirst.mockResolvedValue({
+      id: 'farmer-1',
+      name: 'Sunil Jadhav',
+      centreId: 'centre-1',
+      landAcres: 2,
+      centre: { code: 'C07' },
+    });
     mockedPrisma.crop.findUnique.mockResolvedValue({ id: 'soybean', name: 'Soybean' });
     mockedPrisma.priceBoard.findFirst.mockResolvedValue({ ratePerQuintal: 4900 });
     mockedPrisma.purchase.findMany
@@ -705,6 +729,7 @@ describe('API flows', () => {
       expect.objectContaining({ data: expect.objectContaining({ status: 'FLAGGED' }) }),
     );
     expect(mockedPrisma.auditTrail.create).toHaveBeenCalled();
+    expect(mockedPrisma.smsOutbox.upsert).not.toHaveBeenCalled();
     expect(mockedPrisma.syncLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ purchaseUuid: item.uuid, status: 'ACCEPTED' }),
@@ -831,8 +856,6 @@ describe('API flows', () => {
     mockedPrisma.purchase.create.mockImplementation(({ data }) =>
       Promise.resolve({ id: 'purchase-ocr-1', ...data }),
     );
-    mockedPrisma.smsOutbox.create.mockResolvedValue({ id: 'sms-1' });
-
     const response = await request(app).post('/api/v1/purchases').set(syncHeaders(token)).send({
       farmerId: 'farmer-1',
       cropId: 'crop-1',
@@ -918,8 +941,6 @@ describe('API flows', () => {
     mockedPrisma.purchase.create.mockImplementation(({ data }) =>
       Promise.resolve({ id: `purchase-${data.farmerId}`, ...data }),
     );
-    mockedPrisma.smsOutbox.create.mockResolvedValue({ id: 'sms-1' });
-
     const examples = [
       {
         farmerId: 'sunil',
@@ -960,7 +981,7 @@ describe('API flows', () => {
       expect(response.status).toBe(201);
       expect(response.body.data.netKg).toBe(example.netKg);
       expect(response.body.data.amountPaise).toBe(example.amountPaise);
-      expect(response.body.data.status).toBe('DRAFT');
+      expect(response.body.data.status).toBe('SYNCED');
     }
 
     expect(mockedPrisma.purchase.create).toHaveBeenCalledTimes(3);
@@ -974,7 +995,49 @@ describe('API flows', () => {
     expect(mockedPrisma.purchase.findMany.mock.invocationCallOrder[0]).toBeLessThan(
       mockedPrisma.purchase.create.mock.invocationCallOrder[0]!,
     );
-    expect(mockedPrisma.smsOutbox.create).toHaveBeenCalledTimes(3);
+    expect(mockedPrisma.smsOutbox.upsert).toHaveBeenCalledTimes(3);
+    expect(mockedPrisma.smsOutbox.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          purchaseId: 'purchase-sunil',
+          status: 'SENT',
+          messageMarathi: expect.stringContaining('रसीद'),
+        }),
+      }),
+    );
+  });
+
+  it('returns the stored Marathi slip and does not invent slips for flagged purchases', async () => {
+    const token = createOperatorToken();
+    const message = 'रसीद purchase-1 | शेतकरी: Sunil Jadhav';
+    mockedPrisma.purchase.findFirst.mockResolvedValueOnce({
+      id: 'purchase-1',
+      status: 'SYNCED',
+    });
+    mockedPrisma.smsOutbox.findUnique.mockResolvedValueOnce({
+      messageMarathi: message,
+      status: 'SENT',
+    });
+
+    const preview = await request(app).get('/api/v1/sms/purchase-1').set(authHeaders(token));
+
+    expect(preview.status).toBe(200);
+    expect(preview.body.data).toEqual({ messageMarathi: message, status: 'SENT' });
+    expect(mockedPrisma.smsOutbox.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { purchaseId: 'purchase-1' } }),
+    );
+
+    mockedPrisma.purchase.findFirst.mockResolvedValueOnce({
+      id: 'purchase-flagged',
+      status: 'FLAGGED',
+    });
+    mockedPrisma.smsOutbox.findUnique.mockResolvedValueOnce(null);
+
+    const flagged = await request(app).get('/api/v1/sms/purchase-flagged').set(authHeaders(token));
+
+    expect(flagged.status).toBe(409);
+    expect(flagged.body.message).toContain('flagged purchase');
+    expect(flagged.body.data).toBeUndefined();
   });
 
   it('flags online purchases over the configured yield cap and records the reason', async () => {
@@ -1016,7 +1079,7 @@ describe('API flows', () => {
         }),
       }),
     );
-    expect(mockedPrisma.smsOutbox.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.smsOutbox.upsert).not.toHaveBeenCalled();
   });
 
   it('rejects tare greater than gross and does not persist the purchase', async () => {
@@ -1184,7 +1247,7 @@ describe('API flows', () => {
       expect.objectContaining({ data: expect.objectContaining({ status: 'FLAGGED' }) }),
     );
     expect(mockedPrisma.auditTrail.create).toHaveBeenCalled();
-    expect(mockedPrisma.smsOutbox.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.smsOutbox.upsert).not.toHaveBeenCalled();
   });
 
   it('returns an explicit server error when purchase persistence fails', async () => {
