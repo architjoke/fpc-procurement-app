@@ -8,6 +8,8 @@ router.get('/dashboard/summary', requireAuth, async (req: AuthenticatedRequest, 
   const today = new Date();
   const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const scope = centreScope(req.user!);
+  const centreFilter =
+    req.user?.role === 'centre_operator' ? { id: req.user.centreId ?? undefined } : {};
 
   const [purchasesToday, pending, byCentre] = await Promise.all([
     prisma.purchase.count({ where: { ...scope, createdAt: { gte: startOfDay } } }),
@@ -16,7 +18,7 @@ router.get('/dashboard/summary', requireAuth, async (req: AuthenticatedRequest, 
       where: { ...scope, status: { in: ['DRAFT', 'FLAGGED', 'APPROVED'] } },
     }),
     prisma.centre.findMany({
-      where: scope,
+      where: centreFilter,
       include: { purchases: true },
     }),
   ]);

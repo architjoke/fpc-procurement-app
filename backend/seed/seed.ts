@@ -47,23 +47,21 @@ async function main() {
   const soybean = await prisma.crop.create({ data: { name: 'Soybean', unit: 'kg' } });
   const tur = await prisma.crop.create({ data: { name: 'Tur', unit: 'kg' } });
 
+  const effectiveDate = new Date();
+  effectiveDate.setUTCHours(0, 0, 0, 0);
   await prisma.priceBoard.createMany({
     data: [
-      {
-        cropId: soybean.id,
-        grade: 'A',
-        ratePerQuintal: 4850,
-        effectiveDate: new Date(),
-        setByUserId: manager.id,
-      },
-      {
-        cropId: tur.id,
-        grade: 'A',
-        ratePerQuintal: 7200,
-        effectiveDate: new Date(),
-        setByUserId: manager.id,
-      },
-    ],
+      { cropId: soybean.id, grade: 'A', ratePerQuintal: 4850 },
+      { cropId: soybean.id, grade: 'B', ratePerQuintal: 4700 },
+      { cropId: soybean.id, grade: 'C', ratePerQuintal: 4500 },
+      { cropId: tur.id, grade: 'A', ratePerQuintal: 7200 },
+      { cropId: tur.id, grade: 'B', ratePerQuintal: 7000 },
+      { cropId: tur.id, grade: 'C', ratePerQuintal: 6800 },
+    ].map((price) => ({
+      ...price,
+      effectiveDate,
+      setByUserId: manager.id,
+    })),
   });
 
   const farmerSunil = await prisma.farmer.create({

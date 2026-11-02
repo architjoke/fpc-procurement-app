@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import { hashSync } from 'bcryptjs';
+import { Prisma } from '@prisma/client';
 
 process.env.NODE_ENV = 'test';
 
@@ -15,6 +16,13 @@ const mockedPrisma = vi.hoisted(() => ({
     update: vi.fn(),
   },
   crop: { findUnique: vi.fn() },
+  priceBoard: {
+    findMany: vi.fn(),
+    findFirst: vi.fn(),
+    findUnique: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+  },
   purchase: { create: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
   smsOutbox: { create: vi.fn() },
   auditTrail: { create: vi.fn(), findFirst: vi.fn() },
@@ -146,6 +154,151 @@ describe('API flows', () => {
       .send({ cropId: 'crop-1', grade: 'A', ratePerQuintal: 4850 });
 
     expect(response.status).toBe(403);
+  });
+
+  it('lets authenticated operators read the shared price board', async () => {
+    const token = jwt.sign(
+      {
+        sub: 'user-1',
+        email: 'operator@demo.in',
+        role: 'centre_operator',
+        centreId: 'centre-1',
+        type: 'access',
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+    mockedPrisma.priceBoard.findMany.mockResolvedValue([{ id: 'price-1', ratePerQuintal: 4850 }]);
+
+    const response = await request(app)
+      .get('/api/v1/price-board')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toHaveLength(1);
+    expect(mockedPrisma.priceBoard.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: expect.any(Array) }),
+    );
+  });
+
+  it('creates a daily price using registry API field names', async () => {
+    const token = jwt.sign(
+      { sub: 'manager-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+    mockedPrisma.crop.findUnique.mockResolvedValue({ id: 'soybean' });
+    mockedPrisma.priceBoard.create.mockImplementation(({ data }) =>
+      Promise.resolve({ id: 'price-1', ...data }),
+    );
+
+    const response = await request(app)
+      .post('/api/v1/price-board')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        crop_id: 'soybean',
+        grade: 'A',
+        rate_per_quintal: 4850,
+        effective_date: '2026-11-02',
+      });
+
+    expect(response.status).toBe(201);
+    expect(mockedPrisma.priceBoard.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          cropId: 'soybean',
+          grade: 'A',
+          ratePerQuintal: 4850,
+          effectiveDate: new Date('2026-11-02T00:00:00.000Z'),
+          setByUserId: 'manager-1',
+        }),
+      }),
+    );
+  });
+
+  it('rejects invalid daily price data', async () => {
+    const token = jwt.sign(
+      { sub: 'manager-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+
+    const response = await request(app)
+      .post('/api/v1/price-board')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ crop_id: 'soybean', grade: '', rate_per_quintal: -1 });
+
+    expect(response.status).toBe(400);
+    expect(mockedPrisma.priceBoard.create).not.toHaveBeenCalled();
+  });
+
+  it('returns a conflict if a crop grade already has a price that day', async () => {
+    const token = jwt.sign(
+      { sub: 'manager-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+    mockedPrisma.crop.findUnique.mockResolvedValue({ id: 'soybean' });
+    mockedPrisma.priceBoard.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Duplicate daily price', {
+        code: 'P2002',
+        clientVersion: 'test',
+      }),
+    );
+
+    const response = await request(app)
+      .post('/api/v1/price-board')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        crop_id: 'soybean',
+        grade: 'A',
+        rate_per_quintal: 4850,
+        effective_date: '2026-11-02',
+      });
+
+    expect(response.status).toBe(409);
+  });
+
+  it('updates daily price fields only for managers', async () => {
+    const token = jwt.sign(
+      { sub: 'manager-2', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+    mockedPrisma.priceBoard.findUnique.mockResolvedValue({ id: 'price-1' });
+    mockedPrisma.priceBoard.update.mockImplementation(({ data }) =>
+      Promise.resolve({ id: 'price-1', ...data }),
+    );
+
+    const response = await request(app)
+      .put('/api/v1/price-board/price-1')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ rate_per_quintal: 4900 });
+
+    expect(response.status).toBe(200);
+    expect(mockedPrisma.priceBoard.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'price-1' },
+        data: { ratePerQuintal: 4900, setByUserId: 'manager-2' },
+      }),
+    );
+
+    const operatorToken = jwt.sign(
+      {
+        sub: 'operator-1',
+        email: 'operator@demo.in',
+        role: 'centre_operator',
+        centreId: 'centre-1',
+        type: 'access',
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+    const forbidden = await request(app)
+      .put('/api/v1/price-board/price-1')
+      .set('Authorization', `Bearer ${operatorToken}`)
+      .send({ rate_per_quintal: 4900 });
+    expect(forbidden.status).toBe(403);
   });
 
   it('scopes an operator farmer query to their centre', async () => {

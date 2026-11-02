@@ -141,9 +141,7 @@ router.post(
             centreId: p.centreId,
           }),
         ),
-        sameDayMoisture: sameDayMoisture.map((p: { moisturePct: number | string | null }) =>
-          Number(p.moisturePct),
-        ),
+        sameDayMoisture: sameDayMoisture.map((p) => Number(p.moisturePct)),
       });
 
       if (anomalies.length > 0) {
@@ -207,8 +205,12 @@ router.patch(
   requireRole('office_manager'),
   async (req: AuthenticatedRequest, res) => {
     try {
+      const parsedId = z.string().min(1).safeParse(req.params.id);
+      if (!parsedId.success) {
+        return res.status(400).json({ message: 'Invalid purchase id.' });
+      }
       const { action, reason } = reviewSchema.parse(req.body);
-      const purchase = await prisma.purchase.findUnique({ where: { id: req.params.id } });
+      const purchase = await prisma.purchase.findUnique({ where: { id: parsedId.data } });
 
       if (!purchase) {
         return res.status(404).json({ message: 'Purchase not found.' });

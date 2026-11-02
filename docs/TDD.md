@@ -26,6 +26,7 @@ The project is split into a plain Express + TypeScript backend and a Vite + Reac
 - POST /api/v1/farmers
 - GET /api/v1/price-board
 - POST /api/v1/price-board
+- PUT /api/v1/price-board/:id
 - POST /api/v1/purchases
 - PATCH /api/v1/purchases/:id/review
 - POST /api/v1/ocr/parse
@@ -40,6 +41,7 @@ The project is split into a plain Express + TypeScript backend and a Vite + Reac
 - Net weight = gross - tare.
 - Moisture deduction applies to full percentage points above 12%.
 - Amount is calculated using integer paise with no floating-point drift.
+- A crop and grade can have only one price per effective calendar date.
 - Entry review and audit logging are enforced for flagged purchases.
 
 ## OCR flow

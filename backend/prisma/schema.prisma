@@ -110,11 +110,12 @@ model PriceBoard {
   crop            Crop     @relation(fields: [cropId], references: [id])
   grade           String
   ratePerQuintal  Int      @map("rate_per_quintal")
-  effectiveDate   DateTime @map("effective_date")
+  effectiveDate   DateTime @db.Date @map("effective_date")
   setByUserId     String   @map("set_by_user_id")
   setByUser       User     @relation(fields: [setByUserId], references: [id])
   createdAt       DateTime @default(now()) @map("created_at")
 
+  @@unique([cropId, grade, effectiveDate])
   @@map("price_board")
 }
 

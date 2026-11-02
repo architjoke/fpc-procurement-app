@@ -55,8 +55,13 @@ router.post(
 );
 
 router.get('/:id/export', requireAuth, requireRole('office_manager'), async (req, res) => {
+  const parsedId = z.string().min(1).safeParse(req.params.id);
+  if (!parsedId.success) {
+    return res.status(400).json({ message: 'Invalid payment run id.' });
+  }
+
   const run = await prisma.paymentRun.findUnique({
-    where: { id: req.params.id },
+    where: { id: parsedId.data },
     include: { paymentItems: { include: { purchase: { include: { farmer: true } } } } },
   });
 
