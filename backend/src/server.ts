@@ -1,6 +1,6 @@
-import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import { env } from './config/env.js';
 import { authRouter } from './routes/auth.js';
 import { farmersRouter } from './routes/farmers.js';
 import { priceBoardRouter } from './routes/priceBoard.js';
@@ -12,11 +12,11 @@ import { paymentRunsRouter } from './routes/paymentRuns.js';
 import { smsRouter } from './routes/sms.js';
 
 const app = express();
-const port = Number(process.env.PORT ?? 5000);
+const port = env.PORT;
 
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+    origin: env.CORS_ORIGIN,
     credentials: true,
   }),
 );
@@ -35,7 +35,7 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, status: 'healthy' });
 });
 
-if (process.env.NODE_ENV !== 'test') {
+if (env.NODE_ENV !== 'test') {
   app.listen(port, () => {
     console.log(`Backend listening on http://localhost:${port}`);
   });
