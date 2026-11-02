@@ -9,6 +9,7 @@
     "test": "vitest run",
     "seed": "tsx seed/seed.ts",
     "migrate": "prisma migrate dev --name init",
+    "studio": "prisma studio",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

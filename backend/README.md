@@ -6,28 +6,34 @@
 docker compose up -d postgres
 ```
 
-Create a local `.env` file with the required values:
+Make sure Docker Desktop is running first. In PowerShell, create the ignored local environment file:
 
-```bash
-cp .env.example .env
+```powershell
+Copy-Item .env.example .env
 ```
 
-Then fill in:
+Set these variables in `backend/.env` (do not commit this file):
 
-- DATABASE_URL
-- JWT_SECRET
-- JWT_REFRESH_SECRET
-- PORT
-- OCR_SPACE_API_KEY
-- CORS_ORIGIN
+- `DATABASE_URL=postgresql://postgres:postgres@localhost:5433/farmers_payment_app?schema=public`
+- `JWT_SECRET` and `JWT_REFRESH_SECRET` to separate random secrets
+- `PORT=5000`
+- `OCR_SPACE_API_KEY` (optional; required for live OCR)
+- `CORS_ORIGIN=http://localhost:5173`
 
 ## Database and seed
 
+Run from the repository root:
+
 ```bash
-npm install
-npx prisma migrate dev --name init
-npm run seed
+npm run migrate --prefix backend
+npm run seed --prefix backend
 npm run dev
+```
+
+Open Prisma Studio from the repository root:
+
+```bash
+npm run studio --prefix backend
 ```
 
 Demo users:

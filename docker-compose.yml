@@ -1,11 +1,10 @@
-version: '3.9'
 services:
   postgres:
     image: postgres:16-alpine
     container_name: fpc-postgres
     restart: unless-stopped
     ports:
-      - '5432:5432'
+      - '5433:5432'
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
