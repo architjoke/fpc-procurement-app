@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, Route, Routes, useNavigate } from 'react-router-dom';
+import { Link, Navigate, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { api } from './lib/api';
 import { getSession, saveSession, clearSession, type AuthSession } from './lib/session';
 import { useAuthStore } from './lib/authStore';
 import LoginPage from './pages/LoginPage';
+import {
+  FindFarmerPage,
+  OperatorRoutes,
+  PurchaseDetailPage,
+  PurchaseWizardPage,
+} from './pages/OperatorFlow';
 import { useOfflineQueue } from './hooks/useOfflineQueue';
 import { offlineDb } from './lib/offlineDb';
 
@@ -1247,12 +1253,18 @@ export default function App() {
     navigate('/');
   };
 
+  const operatorHome = session
+    ? session.user.role === 'centre_operator'
+      ? '/operator/find'
+      : '/manager/review'
+    : '/login';
+
   return (
     <div>
       <nav className="topbar">
         <Link to="/">Home</Link>
-        <Link to="/login">Login</Link>
-        <Link to="/operator/find">Capture purchase</Link>
+        {!session && <Link to="/login">Login</Link>}
+        {session?.user.role === 'centre_operator' && <Link to="/operator/find">Find farmer</Link>}
         {session?.user.role === 'office_manager' && (
           <>
             <Link to="/manager/review">Flagged review</Link>
@@ -1266,41 +1278,29 @@ export default function App() {
         )}
       </nav>
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={session ? <Navigate to={operatorHome} replace /> : <Home />} />
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/manager/review" element={<ManagerReview />} />
-        <Route path="/manager/payments" element={<PaymentManagement />} />
-        <Route
-          path="/purchases"
-          element={
-            session?.user.role === 'office_manager' ? (
-              <ManagerReview />
-            ) : (
-              <PurchaseCapture session={session} />
-            )
-          }
-        />
-        <Route
-          path="/review"
-          element={
-            session?.user.role === 'office_manager' ? (
-              <ManagerReview />
-            ) : (
-              <PurchaseCapture session={session} />
-            )
-          }
-        />
-        <Route
-          path="/payments"
-          element={
-            session?.user.role === 'office_manager' ? (
-              <PaymentManagement />
-            ) : (
-              <PurchaseCapture session={session} />
-            )
-          }
-        />
+        <Route path="/operator" element={<OperatorRoutes />}>
+          <Route index element={<Navigate to="find" replace />} />
+          <Route path="find" element={<FindFarmerPage />} />
+          <Route path="purchase/new" element={<PurchaseWizardPage />} />
+          <Route path="purchase/:id" element={<PurchaseDetailPage />} />
+        </Route>
+        <Route path="/manager" element={<ManagerRoleGuard />}>
+          <Route path="review" element={<ManagerReview />} />
+          <Route path="payments" element={<PaymentManagement />} />
+        </Route>
+        <Route path="/purchases" element={<Navigate to={operatorHome} replace />} />
+        <Route path="/review" element={<Navigate to="/manager/review" replace />} />
+        <Route path="/payments" element={<Navigate to="/manager/payments" replace />} />
       </Routes>
     </div>
   );
 }
+
+const ManagerRoleGuard = () => {
+  const session = useAuthStore((state) => state.session);
+  if (!session) return <Navigate to="/login" replace />;
+  if (session.user.role !== 'office_manager') return <Navigate to="/operator/find" replace />;
+  return <Outlet />;
+};

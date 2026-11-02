@@ -30,6 +30,15 @@ export interface SyncHistoryEntry {
   status: 'SYNCED';
   purchaseStatus: 'SYNCED' | 'FLAGGED';
   purchaseId?: string;
+  snapshot?: {
+    farmerId: string;
+    cropId: string;
+    grade: string;
+    grossKg: number;
+    tareKg: number;
+    moisturePct: number;
+    ratePerQuintal: number;
+  };
   reason?: string;
   updatedAt: string;
 }

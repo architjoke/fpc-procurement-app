@@ -26,6 +26,8 @@ export interface SyncStatusEntry {
   status: 'QUEUED' | 'SYNCING' | 'SYNCED' | 'REJECTED' | 'FLAGGED';
   purchaseId?: string;
   reason?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 interface SyncResponse {
@@ -89,11 +91,13 @@ const readStatuses = async (): Promise<SyncStatusEntry[]> => {
       uuid: entry.uuid,
       status: entry.syncStatus,
       reason: entry.lastError,
+      createdAt: entry.createdAt,
     })),
     ...history.map((entry: SyncHistoryEntry) => ({
       uuid: entry.uuid,
       status: entry.purchaseStatus === 'FLAGGED' ? ('FLAGGED' as const) : entry.status,
       ...(entry.purchaseId ? { purchaseId: entry.purchaseId } : {}),
+      updatedAt: entry.updatedAt,
       reason:
         entry.purchaseStatus === 'FLAGGED'
           ? (entry.reason ?? 'Synced and flagged for manager review.')
@@ -229,6 +233,15 @@ export const useOfflineQueue = () => {
                   status: 'SYNCED',
                   purchaseStatus: result.purchase_status ?? 'SYNCED',
                   ...(result.purchase_id ? { purchaseId: result.purchase_id } : {}),
+                  snapshot: {
+                    farmerId: queuedEntry.farmer_id,
+                    cropId: queuedEntry.crop_id,
+                    grade: queuedEntry.grade,
+                    grossKg: queuedEntry.gross_kg,
+                    tareKg: queuedEntry.tare_kg,
+                    moisturePct: queuedEntry.moisture_pct,
+                    ratePerQuintal: queuedEntry.rate_per_quintal,
+                  },
                   reason: result.reason,
                   updatedAt: new Date().toISOString(),
                 });
@@ -265,6 +278,7 @@ export const useOfflineQueue = () => {
     ): Promise<{
       status: 'SAVED' | 'QUEUED' | 'FLAGGED';
       purchaseId?: string;
+      queueId?: string;
       flagReason?: string;
     }> => {
       setError(null);
@@ -277,7 +291,7 @@ export const useOfflineQueue = () => {
         const entry = await makeSignedEntry(draft);
         await offlineDb.purchases.put(entry);
         await refresh();
-        return { status: 'QUEUED' };
+        return { status: 'QUEUED', queueId: entry.uuid };
       }
 
       try {
@@ -303,6 +317,7 @@ export const useOfflineQueue = () => {
         return response.data.data.status === 'FLAGGED'
           ? {
               status: 'FLAGGED',
+              purchaseId: response.data.data.id,
               ...(response.data.data.flagReason
                 ? { flagReason: response.data.data.flagReason }
                 : {}),
@@ -318,7 +333,7 @@ export const useOfflineQueue = () => {
         const entry = await makeSignedEntry(draft);
         await offlineDb.purchases.put(entry);
         await refresh();
-        return { status: 'QUEUED' };
+        return { status: 'QUEUED', queueId: entry.uuid };
       }
     },
     [refresh],
