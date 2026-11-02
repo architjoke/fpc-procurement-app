@@ -4,7 +4,11 @@ import {
   calculateNetWeightKg,
   roundToOneDecimal,
 } from '../utils/calculations.js';
-import { signPayload, verifySignature } from '../utils/hmac.js';
+import {
+  canonicalizeSyncPurchase,
+  signSyncPurchase,
+  verifySyncPurchaseSignature,
+} from '../utils/hmac.js';
 import { detectAnomalies } from '../services/anomaly.js';
 
 describe('business rules', () => {
@@ -45,11 +49,30 @@ describe('business rules', () => {
     expect(() => calculateAmountPaisa(Number.MAX_SAFE_INTEGER, 4850)).toThrow(RangeError);
   });
 
-  it('signs and verifies HMAC payloads', () => {
-    const payload = { deviceId: 'c07-mobile', amountPaise: 4030350 };
-    const signature = signPayload(payload, 'device-secret');
-    expect(verifySignature(payload, signature, 'device-secret')).toBe(true);
-    expect(verifySignature(payload, 'deadbeef', 'device-secret')).toBe(false);
+  it('canonicalizes and verifies signed sync purchases, rejecting tampered payloads', () => {
+    const payload = {
+      uuid: '37ba8d5b-d259-44d7-a187-5ea594f3cb9c',
+      farmer_id: 'farmer-1',
+      centre_id: 'centre-1',
+      crop_id: 'crop-1',
+      grade: 'A',
+      gross_kg: 100,
+      tare_kg: 5,
+      moisture_pct: 12.5,
+      device_timestamp: '2026-11-02T10:00:00Z',
+      nonce: '0d61f20f-45bc-45d0-b190-4332fca73c22',
+      rate_per_quintal: 4850,
+    };
+    const signature = signSyncPurchase(payload, 'device-secret');
+
+    expect(canonicalizeSyncPurchase(payload)).toBe(
+      'centre_id=centre-1|crop_id=crop-1|device_timestamp=2026-11-02T10%3A00%3A00.000Z|farmer_id=farmer-1|grade=A|gross_kg=100|moisture_pct=12.5|nonce=0d61f20f-45bc-45d0-b190-4332fca73c22|rate_per_quintal=4850|tare_kg=5|uuid=37ba8d5b-d259-44d7-a187-5ea594f3cb9c',
+    );
+    expect(verifySyncPurchaseSignature(payload, signature, 'device-secret')).toBe(true);
+    expect(
+      verifySyncPurchaseSignature({ ...payload, gross_kg: 101 }, signature, 'device-secret'),
+    ).toBe(false);
+    expect(verifySyncPurchaseSignature(payload, 'deadbeef', 'device-secret')).toBe(false);
   });
 
   it('detects each configured anomaly trigger', () => {

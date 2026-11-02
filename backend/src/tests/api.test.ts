@@ -3,6 +3,8 @@ import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import { hashSync } from 'bcryptjs';
 import { Prisma } from '@prisma/client';
+import { createHash } from 'node:crypto';
+import { signSyncPurchase, type SyncPurchasePayload } from '../utils/hmac.js';
 
 process.env.NODE_ENV = 'test';
 
@@ -16,6 +18,8 @@ const mockedPrisma = vi.hoisted(() => ({
     update: vi.fn(),
   },
   crop: { findUnique: vi.fn() },
+  deviceSession: { create: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
+  syncNonce: { deleteMany: vi.fn(), findUnique: vi.fn(), create: vi.fn() },
   priceBoard: {
     findMany: vi.fn(),
     findFirst: vi.fn(),
@@ -23,13 +27,20 @@ const mockedPrisma = vi.hoisted(() => ({
     create: vi.fn(),
     update: vi.fn(),
   },
-  purchase: { create: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+  purchase: {
+    create: vi.fn(),
+    findFirst: vi.fn(),
+    findMany: vi.fn(),
+    findUnique: vi.fn(),
+    update: vi.fn(),
+  },
   smsOutbox: { create: vi.fn() },
   auditTrail: { create: vi.fn(), findFirst: vi.fn() },
   syncLog: { create: vi.fn() },
   paymentRun: { create: vi.fn() },
   paymentRunItem: { create: vi.fn() },
   centre: { findMany: vi.fn() },
+  $transaction: vi.fn(),
 }));
 
 vi.mock('../config/database.js', () => ({
@@ -56,7 +67,59 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.JWT_SECRET = 'test-secret';
   process.env.JWT_REFRESH_SECRET = 'test-refresh-secret';
+  mockedPrisma.$transaction.mockImplementation((callback) => callback(mockedPrisma));
 });
+
+const testDeviceSecret = 'test-device-secret';
+const testDeviceId = 'device-session-1';
+const createSyncItem = (
+  overrides: Partial<SyncPurchasePayload> = {},
+): SyncPurchasePayload & { hmac_signature: string } => {
+  const payload: SyncPurchasePayload = {
+    uuid: 'b2784f92-04f3-466d-8dd1-5014c4a26a5e',
+    farmer_id: 'farmer-1',
+    centre_id: 'centre-1',
+    crop_id: 'soybean',
+    grade: 'A',
+    gross_kg: 500,
+    tare_kg: 10,
+    moisture_pct: 12,
+    device_timestamp: new Date().toISOString(),
+    nonce: '0d61f20f-45bc-45d0-b190-4332fca73c22',
+    rate_per_quintal: 4850,
+    ...overrides,
+  };
+  return { ...payload, hmac_signature: signSyncPurchase(payload, testDeviceSecret) };
+};
+
+const syncHeaders = (token: string) => ({
+  Authorization: `Bearer ${token}`,
+  'x-device-id': testDeviceId,
+  'x-device-secret': testDeviceSecret,
+});
+
+const createOperatorToken = () =>
+  jwt.sign(
+    {
+      sub: 'operator-1',
+      email: 'operator@demo.in',
+      role: 'centre_operator',
+      centreId: 'centre-1',
+      type: 'access',
+    },
+    process.env.JWT_SECRET!,
+    { expiresIn: '15m' },
+  );
+
+const mockSyncDeviceSession = (lastAcceptedTimestamp: Date | null = null) => {
+  mockedPrisma.deviceSession.findUnique.mockResolvedValue({
+    deviceId: testDeviceId,
+    userId: 'operator-1',
+    deviceSecretHash: createHash('sha256').update(testDeviceSecret).digest('hex'),
+    lastAcceptedTimestamp,
+    revokedAt: null,
+  });
+};
 
 describe('API flows', () => {
   it('logs in a demo operator and returns tokens', async () => {
@@ -67,6 +130,7 @@ describe('API flows', () => {
       role: 'centre_operator',
       centreId: 'centre-1',
     });
+    mockedPrisma.deviceSession.create.mockResolvedValue({ deviceId: 'device-1' });
 
     const response = await request(app)
       .post('/api/v1/auth/login')
@@ -75,6 +139,16 @@ describe('API flows', () => {
     expect(response.status).toBe(200);
     expect(response.body.accessToken).toBeTruthy();
     expect(response.body.user.email).toBe('operator@demo.in');
+    expect(response.body.device.deviceId).toBeTruthy();
+    expect(response.body.device.deviceSecret).toBeTruthy();
+    expect(mockedPrisma.deviceSession.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 'user-1',
+          deviceSecretHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+      }),
+    );
     const accessPayload = jwt.decode(response.body.accessToken) as jwt.JwtPayload;
     expect(accessPayload.exp! - accessPayload.iat!).toBe(15 * 60);
     const refreshPayload = jwt.decode(response.body.refreshToken) as jwt.JwtPayload;
@@ -501,6 +575,169 @@ describe('API flows', () => {
     }
 
     expect(responseStatus).toBe(429);
+  });
+
+  it('syncs a signed offline purchase and persists it as SYNCED', async () => {
+    const token = createOperatorToken();
+    const item = createSyncItem();
+    mockSyncDeviceSession();
+    mockedPrisma.syncNonce.deleteMany.mockResolvedValue({ count: 0 });
+    mockedPrisma.syncNonce.findUnique.mockResolvedValue(null);
+    mockedPrisma.syncNonce.create.mockResolvedValue({ id: 'nonce-1' });
+    mockedPrisma.deviceSession.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.farmer.findFirst.mockResolvedValue({ id: 'farmer-1', centreId: 'centre-1' });
+    mockedPrisma.crop.findUnique.mockResolvedValue({ id: 'soybean', name: 'Soybean' });
+    mockedPrisma.priceBoard.findFirst.mockResolvedValue({ ratePerQuintal: 4850 });
+    mockedPrisma.purchase.findFirst.mockResolvedValue(null);
+    mockedPrisma.purchase.create.mockImplementation(({ data }) =>
+      Promise.resolve({ id: 'purchase-sync-1', ...data }),
+    );
+    mockedPrisma.syncLog.create.mockResolvedValue({ id: 'log-1' });
+
+    const response = await request(app)
+      .post('/api/v1/sync/purchases')
+      .set(syncHeaders(token))
+      .send([item]);
+
+    expect(response.status).toBe(200);
+    expect(response.body.accepted).toEqual([item.uuid]);
+    expect(response.body.results).toEqual([
+      expect.objectContaining({ uuid: item.uuid, status: 'SYNCED', purchase_status: 'SYNCED' }),
+    ]);
+    expect(mockedPrisma.purchase.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          uuid: item.uuid,
+          rate: 4850,
+          netKg: 490,
+          amountPaise: 2376500,
+          status: 'SYNCED',
+        }),
+      }),
+    );
+    expect(mockedPrisma.syncLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ purchaseUuid: item.uuid, status: 'ACCEPTED' }),
+      }),
+    );
+  });
+
+  it('rejects a tampered signed purchase and writes a rejection log', async () => {
+    const token = createOperatorToken();
+    const item = { ...createSyncItem(), gross_kg: 600 };
+    mockSyncDeviceSession();
+    mockedPrisma.syncNonce.deleteMany.mockResolvedValue({ count: 0 });
+    mockedPrisma.syncLog.create.mockResolvedValue({ id: 'log-1' });
+
+    const response = await request(app)
+      .post('/api/v1/sync/purchases')
+      .set(syncHeaders(token))
+      .send([item]);
+
+    expect(response.status).toBe(200);
+    expect(response.body.rejected[0]).toEqual(
+      expect.objectContaining({ uuid: item.uuid, reason: 'Invalid purchase HMAC signature.' }),
+    );
+    expect(mockedPrisma.purchase.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.syncLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ purchaseUuid: item.uuid, status: 'REJECTED' }),
+      }),
+    );
+  });
+
+  it('rejects replayed nonces and out-of-order device timestamps', async () => {
+    const token = createOperatorToken();
+    const item = createSyncItem({
+      device_timestamp: '2026-11-02T10:00:00.000Z',
+    });
+    mockSyncDeviceSession(new Date('2026-11-02T10:00:00.000Z'));
+    mockedPrisma.syncNonce.deleteMany.mockResolvedValue({ count: 0 });
+    mockedPrisma.syncNonce.findUnique.mockResolvedValue({ id: 'nonce-used' });
+    mockedPrisma.syncLog.create.mockResolvedValue({ id: 'log-1' });
+
+    const outOfOrder = await request(app)
+      .post('/api/v1/sync/purchases')
+      .set(syncHeaders(token))
+      .send([item]);
+    expect(outOfOrder.body.rejected[0].reason).toContain('timestamp');
+
+    mockSyncDeviceSession();
+    mockedPrisma.syncNonce.findUnique.mockResolvedValue({ id: 'nonce-used' });
+    const replay = await request(app)
+      .post('/api/v1/sync/purchases')
+      .set(syncHeaders(token))
+      .send([item]);
+    expect(replay.body.rejected[0].reason).toBe('Nonce has already been used.');
+    expect(mockedPrisma.purchase.create).not.toHaveBeenCalled();
+  });
+
+  it('persists duplicate farmer and changed-price conflicts as FLAGGED purchases', async () => {
+    const token = createOperatorToken();
+    const item = createSyncItem();
+    mockSyncDeviceSession();
+    mockedPrisma.syncNonce.deleteMany.mockResolvedValue({ count: 0 });
+    mockedPrisma.syncNonce.findUnique.mockResolvedValue(null);
+    mockedPrisma.syncNonce.create.mockResolvedValue({ id: 'nonce-1' });
+    mockedPrisma.deviceSession.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.farmer.findFirst.mockResolvedValue({ id: 'farmer-1', centreId: 'centre-1' });
+    mockedPrisma.crop.findUnique.mockResolvedValue({ id: 'soybean', name: 'Soybean' });
+    mockedPrisma.priceBoard.findFirst.mockResolvedValue({ ratePerQuintal: 4900 });
+    mockedPrisma.purchase.findFirst.mockResolvedValue({ id: 'recent-purchase' });
+    mockedPrisma.purchase.create.mockImplementation(({ data }) =>
+      Promise.resolve({ id: 'purchase-flagged', ...data }),
+    );
+    mockedPrisma.auditTrail.create.mockResolvedValue({ id: 'audit-1' });
+    mockedPrisma.syncLog.create.mockResolvedValue({ id: 'log-1' });
+
+    const response = await request(app)
+      .post('/api/v1/sync/purchases')
+      .set(syncHeaders(token))
+      .send([item]);
+
+    expect(response.status).toBe(200);
+    expect(response.body.results[0]).toEqual(
+      expect.objectContaining({ status: 'SYNCED', purchase_status: 'FLAGGED' }),
+    );
+    expect(response.body.results[0].reason).toContain('Price changed');
+    expect(response.body.results[0].reason).toContain('within the last 60 minutes');
+    expect(mockedPrisma.purchase.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'FLAGGED' }) }),
+    );
+    expect(mockedPrisma.auditTrail.create).toHaveBeenCalled();
+    expect(mockedPrisma.syncLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ purchaseUuid: item.uuid, status: 'ACCEPTED' }),
+      }),
+    );
+  });
+
+  it('rejects sync from another device user or with a bad device secret', async () => {
+    const token = createOperatorToken();
+    const item = createSyncItem();
+    mockSyncDeviceSession();
+    mockedPrisma.deviceSession.findUnique.mockResolvedValueOnce({
+      deviceId: testDeviceId,
+      userId: 'someone-else',
+      deviceSecretHash: createHash('sha256').update(testDeviceSecret).digest('hex'),
+      lastAcceptedTimestamp: null,
+      revokedAt: null,
+    });
+    mockedPrisma.syncLog.create.mockResolvedValue({ id: 'log-1' });
+
+    const wrongUser = await request(app)
+      .post('/api/v1/sync/purchases')
+      .set(syncHeaders(token))
+      .send([item]);
+    expect(wrongUser.status).toBe(401);
+
+    mockSyncDeviceSession();
+    const wrongSecret = await request(app)
+      .post('/api/v1/sync/purchases')
+      .set({ ...syncHeaders(token), 'x-device-secret': 'incorrect-secret' })
+      .send([item]);
+    expect(wrongSecret.status).toBe(401);
+    expect(mockedPrisma.purchase.create).not.toHaveBeenCalled();
   });
 
   it('blocks a purchase if the OCR mismatch is not reconciled', async () => {

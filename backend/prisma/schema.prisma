@@ -60,6 +60,7 @@ model User {
   priceBoards   PriceBoard[]
   paymentRuns   PaymentRun[]
   auditTrails   AuditTrail[]
+  deviceSessions DeviceSession[]
 
   @@map("users")
 }
@@ -182,6 +183,33 @@ model SyncLog {
   receivedAt  DateTime  @default(now()) @map("received_at")
 
   @@map("sync_log")
+}
+
+model DeviceSession {
+  deviceId                 String       @id @map("device_id")
+  userId                   String       @map("user_id")
+  user                     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceSecretHash         String       @map("device_secret_hash")
+  lastAcceptedTimestamp    DateTime?    @map("last_accepted_timestamp")
+  createdAt                DateTime     @default(now()) @map("created_at")
+  revokedAt                DateTime?    @map("revoked_at")
+  nonces                   SyncNonce[]
+
+  @@index([userId])
+  @@map("device_sessions")
+}
+
+model SyncNonce {
+  id          String        @id @default(cuid())
+  deviceId    String        @map("device_id")
+  device      DeviceSession @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  nonce       String
+  expiresAt   DateTime      @map("expires_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  @@unique([deviceId, nonce])
+  @@index([expiresAt])
+  @@map("sync_nonces")
 }
 
 model AuditTrail {

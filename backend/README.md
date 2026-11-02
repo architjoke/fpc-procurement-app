@@ -30,6 +30,8 @@ npm run seed --prefix backend
 npm run dev
 ```
 
+After pulling schema changes, run migrations again with `npm run migrate --prefix backend`.
+
 Open Prisma Studio from the repository root:
 
 ```bash

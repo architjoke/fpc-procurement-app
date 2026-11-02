@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
@@ -59,9 +59,24 @@ router.post('/login', loginRateLimit, async (req, res) => {
       { expiresIn: '7d' },
     );
 
+    let device: { deviceId: string; deviceSecret: string } | undefined;
+    if (user.role === 'centre_operator') {
+      const deviceId = randomUUID();
+      const deviceSecret = randomBytes(32).toString('base64url');
+      await prisma.deviceSession.create({
+        data: {
+          deviceId,
+          userId: user.id,
+          deviceSecretHash: createHash('sha256').update(deviceSecret).digest('hex'),
+        },
+      });
+      device = { deviceId, deviceSecret };
+    }
+
     return res.json({
       accessToken,
       refreshToken,
+      ...(device ? { device } : {}),
       user: {
         id: user.id,
         email: user.email,

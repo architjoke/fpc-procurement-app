@@ -11,6 +11,8 @@ The project is split into a plain Express + TypeScript backend and a Vite + Reac
 - crops
 - price_board
 - purchases
+- device_sessions
+- sync_nonces
 - payment_runs
 - payment_run_items
 - sync_log
@@ -61,9 +63,24 @@ The project is split into a plain Express + TypeScript backend and a Vite + Reac
 3. Backend verifies signature, rejects replays, and logs every result.
 4. Any conflict is escalated to a flagged purchase for manager review.
 
+### Offline purchase signature format
+
+The client sends each batch item with `hmac_signature` excluded from the signed content. The
+remaining fields are serialized in this exact lexicographic key order:
+
+`centre_id`, `crop_id`, `device_timestamp`, `farmer_id`, `grade`, `gross_kg`, `moisture_pct`,
+`nonce`, `rate_per_quintal`, `tare_kg`, `uuid`.
+
+Each component is `key=encodeURIComponent(value)`; components are joined by `|`. Timestamps are
+normalized to UTC ISO-8601 with milliseconds, and numbers use JavaScript's canonical `String(number)`
+representation. HMAC-SHA256 uses the device secret returned at operator login and emits lowercase
+hex. The batch sends the device ID and device secret in `x-device-id` and `x-device-secret` headers.
+The server stores only a SHA-256 hash of each device secret and expires consumed nonces after 24
+hours.
+
 ## Assumptions and future work
 
-- The app is local-first and uses mocked device keys in this phase.
+- Operator device secrets are issued at login and stored server-side only as SHA-256 hashes.
 - Payment export uses a mock bank CSV format.
 - OCR.sample images are present under frontend/public for local verification.
 - The project focuses on the core workflow rather than deeper dispatch or stock analytics.
