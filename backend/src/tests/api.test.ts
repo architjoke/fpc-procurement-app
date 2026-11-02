@@ -301,6 +301,27 @@ describe('API flows', () => {
     expect(forbidden.status).toBe(403);
   });
 
+  it('rejects empty price updates and unknown price fields', async () => {
+    const token = jwt.sign(
+      { sub: 'manager-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+
+    const empty = await request(app)
+      .put('/api/v1/price-board/price-1')
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
+    expect(empty.status).toBe(400);
+
+    const unknownField = await request(app)
+      .put('/api/v1/price-board/price-1')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ unexpected: 'value' });
+    expect(unknownField.status).toBe(400);
+    expect(mockedPrisma.priceBoard.update).not.toHaveBeenCalled();
+  });
+
   it('scopes an operator farmer query to their centre', async () => {
     const token = jwt.sign(
       {
@@ -495,7 +516,7 @@ describe('API flows', () => {
       { expiresIn: '1h' },
     );
 
-    mockedPrisma.farmer.findUnique.mockResolvedValue({
+    mockedPrisma.farmer.findFirst.mockResolvedValue({
       id: 'farmer-1',
       memberId: 'F-1001',
       name: 'Sunil Jadhav',
@@ -516,12 +537,340 @@ describe('API flows', () => {
         grossKg: 1250,
         tareKg: 18,
         moisturePct: 11.5,
-        ratePerQuintal: 4850,
         ocrWeight: 1200,
       });
 
     expect(response.status).toBe(400);
     expect(response.body.message).toContain('OCR value differs');
+  });
+
+  it('creates online purchases with exact seed-row net weights and paisa amounts', async () => {
+    const token = jwt.sign(
+      {
+        sub: 'operator-1',
+        email: 'operator@demo.in',
+        role: 'centre_operator',
+        centreId: 'centre-1',
+        type: 'access',
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+    const farmerFixtures = {
+      sunil: {
+        id: 'sunil',
+        memberId: 'F-1001',
+        name: 'Sunil Jadhav',
+        landAcres: 3,
+        centreId: 'centre-1',
+        centre: { code: 'C07' },
+      },
+      kamal: {
+        id: 'kamal',
+        memberId: 'F-1002',
+        name: 'Kamal Shinde',
+        landAcres: 2.5,
+        centreId: 'centre-1',
+        centre: { code: 'C07' },
+      },
+      mohan: {
+        id: 'mohan',
+        memberId: 'F-1003',
+        name: 'Mohan Biradar',
+        landAcres: 4,
+        centreId: 'centre-1',
+        centre: { code: 'C07' },
+      },
+    };
+    mockedPrisma.farmer.findFirst.mockImplementation(({ where }) =>
+      Promise.resolve(farmerFixtures[where.id as keyof typeof farmerFixtures] ?? null),
+    );
+    mockedPrisma.crop.findUnique.mockImplementation(({ where }) =>
+      Promise.resolve({
+        id: where.id,
+        name: where.id === 'tur' ? 'Tur' : 'Soybean',
+        unit: 'kg',
+      }),
+    );
+    mockedPrisma.priceBoard.findFirst.mockImplementation(({ where }) =>
+      Promise.resolve({
+        ratePerQuintal: where.cropId === 'tur' ? 7200 : 4850,
+      }),
+    );
+    mockedPrisma.purchase.findMany.mockResolvedValue([]);
+    mockedPrisma.purchase.create.mockImplementation(({ data }) =>
+      Promise.resolve({ id: `purchase-${data.farmerId}`, ...data }),
+    );
+    mockedPrisma.smsOutbox.create.mockResolvedValue({ id: 'sms-1' });
+
+    const examples = [
+      {
+        farmerId: 'sunil',
+        cropId: 'soybean',
+        grossKg: 1250,
+        tareKg: 18,
+        moisturePct: 11.5,
+        netKg: 1232,
+        amountPaise: 5975200,
+      },
+      {
+        farmerId: 'kamal',
+        cropId: 'soybean',
+        grossKg: 860,
+        tareKg: 12,
+        moisturePct: 14,
+        netKg: 831,
+        amountPaise: 4030350,
+      },
+      {
+        farmerId: 'mohan',
+        cropId: 'tur',
+        grossKg: 640,
+        tareKg: 10,
+        moisturePct: 10,
+        netKg: 630,
+        amountPaise: 4536000,
+      },
+    ];
+
+    for (const example of examples) {
+      const { netKg, amountPaise, ...purchaseInput } = example;
+      const response = await request(app)
+        .post('/api/v1/purchases')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ ...purchaseInput, grade: 'A' });
+
+      expect(response.status).toBe(201);
+      expect(response.body.data.netKg).toBe(example.netKg);
+      expect(response.body.data.amountPaise).toBe(example.amountPaise);
+      expect(response.body.data.status).toBe('DRAFT');
+    }
+
+    expect(mockedPrisma.purchase.create).toHaveBeenCalledTimes(3);
+    expect(mockedPrisma.priceBoard.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          effectiveDate: { lte: expect.any(Date) },
+        }),
+      }),
+    );
+    expect(mockedPrisma.purchase.findMany.mock.invocationCallOrder[0]).toBeLessThan(
+      mockedPrisma.purchase.create.mock.invocationCallOrder[0]!,
+    );
+    expect(mockedPrisma.smsOutbox.create).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects tare greater than gross and does not persist the purchase', async () => {
+    const token = jwt.sign(
+      {
+        sub: 'operator-1',
+        email: 'operator@demo.in',
+        role: 'centre_operator',
+        centreId: 'centre-1',
+        type: 'access',
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+
+    const response = await request(app)
+      .post('/api/v1/purchases')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        farmerId: 'farmer-1',
+        cropId: 'soybean',
+        grade: 'A',
+        grossKg: 10,
+        tareKg: 11,
+        moisturePct: 12,
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.fieldErrors.tareKg).toContain(
+      'Tare weight cannot exceed gross weight.',
+    );
+    expect(mockedPrisma.purchase.create).not.toHaveBeenCalled();
+  });
+
+  it('requires an active daily board price and never accepts a client rate', async () => {
+    const token = jwt.sign(
+      {
+        sub: 'operator-1',
+        email: 'operator@demo.in',
+        role: 'centre_operator',
+        centreId: 'centre-1',
+        type: 'access',
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+
+    const withClientRate = await request(app)
+      .post('/api/v1/purchases')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        farmerId: 'farmer-1',
+        cropId: 'soybean',
+        grade: 'A',
+        grossKg: 10,
+        tareKg: 1,
+        moisturePct: 12,
+        ratePerQuintal: 999999,
+      });
+    expect(withClientRate.status).toBe(400);
+
+    mockedPrisma.farmer.findFirst.mockResolvedValue({
+      id: 'farmer-1',
+      memberId: 'F-1001',
+      name: 'Sunil Jadhav',
+      centreId: 'centre-1',
+      centre: { code: 'C07' },
+    });
+    mockedPrisma.crop.findUnique.mockResolvedValue({ id: 'soybean', name: 'Soybean' });
+    mockedPrisma.priceBoard.findFirst.mockResolvedValue(null);
+
+    const withoutPrice = await request(app)
+      .post('/api/v1/purchases')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        farmerId: 'farmer-1',
+        cropId: 'soybean',
+        grade: 'A',
+        grossKg: 10,
+        tareKg: 1,
+        moisturePct: 12,
+      });
+    expect(withoutPrice.status).toBe(409);
+    expect(mockedPrisma.purchase.create).not.toHaveBeenCalled();
+  });
+
+  it('scopes online purchase farmer lookup to the operator centre', async () => {
+    const token = jwt.sign(
+      {
+        sub: 'operator-1',
+        email: 'operator@demo.in',
+        role: 'centre_operator',
+        centreId: 'centre-1',
+        type: 'access',
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+    mockedPrisma.farmer.findFirst.mockResolvedValue(null);
+
+    const response = await request(app)
+      .post('/api/v1/purchases')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        farmerId: 'outside-farmer',
+        cropId: 'soybean',
+        grade: 'A',
+        grossKg: 10,
+        tareKg: 1,
+        moisturePct: 12,
+      });
+
+    expect(response.status).toBe(404);
+    expect(mockedPrisma.farmer.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'outside-farmer', centreId: 'centre-1' },
+      }),
+    );
+    expect(mockedPrisma.priceBoard.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('flags repeat purchases without sending the SMS slip', async () => {
+    const token = jwt.sign(
+      {
+        sub: 'operator-1',
+        email: 'operator@demo.in',
+        role: 'centre_operator',
+        centreId: 'centre-1',
+        type: 'access',
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+    mockedPrisma.farmer.findFirst.mockResolvedValue({
+      id: 'farmer-1',
+      memberId: 'F-1001',
+      name: 'Sunil Jadhav',
+      landAcres: 3,
+      centreId: 'centre-1',
+      centre: { code: 'C07' },
+    });
+    mockedPrisma.crop.findUnique.mockResolvedValue({ id: 'soybean', name: 'Soybean' });
+    mockedPrisma.priceBoard.findFirst.mockResolvedValue({ ratePerQuintal: 4850 });
+    mockedPrisma.purchase.findMany
+      .mockResolvedValueOnce([
+        {
+          farmerId: 'farmer-1',
+          createdAt: new Date(Date.now() - 10 * 60 * 1000),
+          centreId: 'centre-1',
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    mockedPrisma.purchase.create.mockResolvedValue({
+      id: 'purchase-new',
+      status: 'DRAFT',
+    });
+    mockedPrisma.purchase.update.mockResolvedValue({
+      id: 'purchase-new',
+      status: 'FLAGGED',
+    });
+    mockedPrisma.auditTrail.create.mockResolvedValue({ id: 'audit-1' });
+
+    const response = await request(app)
+      .post('/api/v1/purchases')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        farmerId: 'farmer-1',
+        cropId: 'soybean',
+        grade: 'A',
+        grossKg: 500,
+        tareKg: 10,
+        moisturePct: 12,
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data.status).toBe('FLAGGED');
+    expect(response.body.anomalies).toEqual(
+      expect.arrayContaining([expect.objectContaining({ trigger: 'REPEATED_FARMER' })]),
+    );
+    expect(mockedPrisma.auditTrail.create).toHaveBeenCalled();
+    expect(mockedPrisma.smsOutbox.create).not.toHaveBeenCalled();
+  });
+
+  it('returns an explicit server error when purchase persistence fails', async () => {
+    const token = jwt.sign(
+      {
+        sub: 'operator-1',
+        email: 'operator@demo.in',
+        role: 'centre_operator',
+        centreId: 'centre-1',
+        type: 'access',
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '15m' },
+    );
+    mockedPrisma.farmer.findFirst.mockRejectedValue(new Error('database unavailable'));
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const response = await request(app)
+      .post('/api/v1/purchases')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        farmerId: 'farmer-1',
+        cropId: 'soybean',
+        grade: 'A',
+        grossKg: 10,
+        tareKg: 1,
+        moisturePct: 12,
+      });
+
+    expect(response.status).toBe(500);
+    expect(response.body.message).toBe('Unable to create purchase.');
+    logError.mockRestore();
   });
 
   it('approves a flagged purchase for manager review', async () => {

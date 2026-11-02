@@ -17,20 +17,30 @@ import { detectAnomalies } from '../services/anomaly.js';
 
 const router = Router();
 
-const createPurchaseSchema = z.object({
-  farmerId: z.string(),
-  cropId: z.string(),
-  grade: z.string(),
-  grossKg: z.coerce.number().positive(),
-  tareKg: z.coerce.number().min(0),
-  moisturePct: z.coerce.number().min(0),
-  ratePerQuintal: z.coerce.number().int().positive(),
-  deviceSignature: z.string().optional(),
-  deviceTimestamp: z.string().datetime().optional(),
-  ocrWeight: z.coerce.number().optional(),
-  ocrMoisture: z.coerce.number().optional(),
-  photoUrl: z.string().optional(),
-});
+const createPurchaseSchema = z
+  .object({
+    farmerId: z.string().min(1),
+    cropId: z.string().min(1),
+    grade: z.string().trim().min(1).max(20),
+    grossKg: z.coerce.number().positive().finite(),
+    tareKg: z.coerce.number().min(0).finite(),
+    moisturePct: z.coerce.number().min(0).max(100).finite(),
+    deviceSignature: z.string().optional(),
+    deviceTimestamp: z.string().datetime({ offset: true }).optional(),
+    ocrWeight: z.coerce.number().positive().finite().optional(),
+    ocrMoisture: z.coerce.number().min(0).max(100).finite().optional(),
+    photoUrl: z.string().optional(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.tareKg > input.grossKg) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['tareKg'],
+        message: 'Tare weight cannot exceed gross weight.',
+      });
+    }
+  });
 
 const reviewSchema = z.object({
   action: z.enum(['approve', 'reject']),
@@ -52,9 +62,16 @@ router.post(
   requireAuth,
   requireRole('centre_operator'),
   async (req: AuthenticatedRequest, res) => {
-    try {
-      const input = createPurchaseSchema.parse(req.body);
+    const parsedInput = createPurchaseSchema.safeParse(req.body);
+    if (!parsedInput.success) {
+      return res.status(400).json({
+        message: 'Invalid purchase payload.',
+        error: parsedInput.error.flatten(),
+      });
+    }
 
+    try {
+      const input = parsedInput.data;
       if (input.ocrWeight != null && Math.abs(input.grossKg - input.ocrWeight) > 0.1) {
         return res.status(400).json({
           message: 'OCR value differs from the entered weight. Please reconcile before saving.',
@@ -67,15 +84,12 @@ router.post(
         });
       }
 
-      const farmer = await prisma.farmer.findUnique({
-        where: { id: input.farmerId },
+      const farmer = await prisma.farmer.findFirst({
+        where: { id: input.farmerId, centreId: req.user!.centreId ?? '' },
         include: { centre: true },
       });
       if (!farmer) {
         return res.status(404).json({ message: 'Farmer not found.' });
-      }
-      if (farmer.centreId !== req.user?.centreId) {
-        return res.status(403).json({ message: 'Cannot create a purchase for another centre.' });
       }
 
       const crop = await prisma.crop.findUnique({ where: { id: input.cropId } });
@@ -83,7 +97,38 @@ router.post(
         return res.status(404).json({ message: 'Crop not found.' });
       }
 
-      const rate = input.ratePerQuintal;
+      const effectiveDate = new Date();
+      effectiveDate.setUTCHours(0, 0, 0, 0);
+      const price = await prisma.priceBoard.findFirst({
+        where: {
+          cropId: input.cropId,
+          grade: input.grade,
+          effectiveDate: { lte: effectiveDate },
+        },
+        orderBy: { effectiveDate: 'desc' },
+      });
+      if (!price) {
+        return res.status(409).json({
+          message: 'No active price is configured for this crop and grade.',
+        });
+      }
+
+      const recentPurchases = await prisma.purchase.findMany({
+        where: {
+          farmerId: input.farmerId,
+          createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
+        },
+      });
+
+      const sameDayMoisture = await prisma.purchase.findMany({
+        where: {
+          centreId: farmer.centreId,
+          createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+        },
+        select: { moisturePct: true },
+      });
+
+      const rate = price.ratePerQuintal;
       const net = calculateNetWeightKg(input.grossKg, input.tareKg, input.moisturePct);
       const amountPaise = calculateAmountPaisa(net, rate);
       const purchaseId = uuidv4();
@@ -109,21 +154,6 @@ router.post(
           ocrConfidence: input.ocrWeight != null ? 0.92 : null,
         },
         include: { farmer: true, centre: true, crop: true },
-      });
-
-      const recentPurchases = await prisma.purchase.findMany({
-        where: {
-          farmerId: input.farmerId,
-          createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
-        },
-      });
-
-      const sameDayMoisture = await prisma.purchase.findMany({
-        where: {
-          centreId: farmer.centreId,
-          createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
-        },
-        select: { moisturePct: true },
       });
 
       const anomalies = detectAnomalies({
@@ -192,9 +222,11 @@ router.post(
 
       return res.status(201).json({ data: purchase, message: 'Purchase created.' });
     } catch (error) {
-      return res
-        .status(400)
-        .json({ message: 'Invalid purchase payload.', error: (error as Error).message });
+      if (error instanceof RangeError) {
+        return res.status(400).json({ message: error.message });
+      }
+      console.error('Unable to create purchase:', error);
+      return res.status(500).json({ message: 'Unable to create purchase.' });
     }
   },
 );

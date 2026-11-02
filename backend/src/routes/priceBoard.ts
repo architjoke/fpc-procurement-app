@@ -44,7 +44,7 @@ const updateSchema = z
     effectiveDate: effectiveDateSchema.optional(),
   })
   .strict()
-  .refine((value) => Object.keys(value).length > 0, {
+  .refine((value) => Object.values(value).some((field) => field !== undefined), {
     message: 'At least one field must be provided.',
   });
 const idSchema = z.string().min(1);

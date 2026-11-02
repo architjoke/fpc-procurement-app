@@ -42,6 +42,8 @@ The project is split into a plain Express + TypeScript backend and a Vite + Reac
 - Moisture deduction applies to full percentage points above 12%.
 - Amount is calculated using integer paise with no floating-point drift.
 - A crop and grade can have only one price per effective calendar date.
+- Online purchase rates are selected from the current daily price board; client-supplied rates are rejected.
+- Tare weight cannot exceed gross weight; calculated net weight is rounded to one decimal before pricing.
 - Entry review and audit logging are enforced for flagged purchases.
 
 ## OCR flow

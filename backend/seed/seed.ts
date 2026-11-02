@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
+import { calculateAmountPaisa, calculateNetWeightKg } from '../src/utils/calculations.js';
 
 const prisma = new PrismaClient();
 
@@ -237,6 +238,7 @@ async function main() {
   const samplePurchases = [
     {
       farmerId: farmerSunil.id,
+      centreId: centre1.id,
       cropId: soybean.id,
       grade: 'A',
       grossKg: 1250.0,
@@ -246,6 +248,7 @@ async function main() {
     },
     {
       farmerId: farmerKamal.id,
+      centreId: centre1.id,
       cropId: soybean.id,
       grade: 'A',
       grossKg: 860.0,
@@ -255,6 +258,7 @@ async function main() {
     },
     {
       farmerId: farmerMohan.id,
+      centreId: centre2.id,
       cropId: tur.id,
       grade: 'A',
       grossKg: 640.0,
@@ -264,19 +268,24 @@ async function main() {
     },
   ];
 
-  const createdPurchases: any[] = [];
+  type SeedPurchase = Prisma.PurchaseGetPayload<{
+    include: { farmer: true; crop: true; centre: true };
+  }>;
+  const createdPurchases: SeedPurchase[] = [];
 
   for (const purchase of samplePurchases) {
-    const netKg = purchase.grossKg - purchase.tareKg;
-    const moistureAdjustment = Math.max(0, Math.floor(purchase.moisturePct - 12));
-    const adjustedNet = Number((netKg * (1 - moistureAdjustment / 100)).toFixed(1));
-    const amountPaise = Math.round((adjustedNet / 100) * purchase.rate * 100);
+    const adjustedNet = calculateNetWeightKg(
+      purchase.grossKg,
+      purchase.tareKg,
+      purchase.moisturePct,
+    );
+    const amountPaise = calculateAmountPaisa(adjustedNet, purchase.rate);
 
     const created = await prisma.purchase.create({
       data: {
         uuid: `purchase-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         farmerId: purchase.farmerId,
-        centreId: centre1.id,
+        centreId: purchase.centreId,
         cropId: purchase.cropId,
         grade: purchase.grade,
         grossKg: purchase.grossKg,
@@ -291,7 +300,7 @@ async function main() {
       include: { farmer: true, crop: true, centre: true },
     });
 
-    createdPurchases.push(created as any);
+    createdPurchases.push(created);
 
     await prisma.auditTrail.create({
       data: {
