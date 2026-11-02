@@ -9,7 +9,7 @@ import {
   signSyncPurchase,
   verifySyncPurchaseSignature,
 } from '../utils/hmac.js';
-import { detectAnomalies } from '../services/anomaly.js';
+import { detectAnomalies, getUtcDayRange } from '../services/anomaly.js';
 
 describe('business rules', () => {
   it('calculates net weight using the moisture deduction formula', () => {
@@ -148,5 +148,98 @@ describe('business rules', () => {
         sameDayMoisture: [14.0, 14.1, 14.2, 14.1, 14.0],
       }),
     ).toEqual(expect.arrayContaining([expect.objectContaining({ trigger: 'MOISTURE_VARIANCE' })]));
+  });
+
+  it('uses UTC calendar-day boundaries for moisture anomaly comparisons', () => {
+    const range = getUtcDayRange(new Date('2026-11-02T23:59:59.999Z'));
+
+    expect(range.start.toISOString()).toBe('2026-11-02T00:00:00.000Z');
+    expect(range.end.toISOString()).toBe('2026-11-03T00:00:00.000Z');
+  });
+
+  it('applies soybean and tur yield caps at exact, below, and above boundaries', () => {
+    const base = {
+      farmerId: 'farmer-boundary',
+      centreId: 'centre-1',
+      tareKg: 0,
+      moisturePct: 20,
+      landAcres: 1,
+      recentPurchases: [],
+      sameDayMoisture: [],
+    };
+
+    for (const [cropType, capKg] of [
+      ['soybean', 1500],
+      ['tur', 1000],
+    ] as const) {
+      expect(
+        detectAnomalies({ ...base, cropType, grossKg: capKg - 0.1 }, new Date()).some(
+          (anomaly) => anomaly.trigger === 'YIELD_CAP',
+        ),
+      ).toBe(false);
+      expect(
+        detectAnomalies({ ...base, cropType, grossKg: capKg }, new Date()).some(
+          (anomaly) => anomaly.trigger === 'YIELD_CAP',
+        ),
+      ).toBe(false);
+      expect(
+        detectAnomalies({ ...base, cropType, grossKg: capKg + 0.1 }, new Date()).some(
+          (anomaly) => anomaly.trigger === 'YIELD_CAP',
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('uses an inclusive 60-minute repeat window and excludes future purchases', () => {
+    const now = new Date('2026-11-02T10:00:00.000Z');
+    const base = {
+      farmerId: 'farmer-repeat',
+      centreId: 'centre-1',
+      grossKg: 500,
+      tareKg: 10,
+      moisturePct: 15,
+      landAcres: 1,
+      cropType: 'soybean' as const,
+      sameDayMoisture: [],
+    };
+    const detectsRepeat = (ageMs: number) =>
+      detectAnomalies(
+        {
+          ...base,
+          recentPurchases: [
+            {
+              farmerId: 'farmer-repeat',
+              centreId: 'centre-1',
+              createdAt: new Date(now.getTime() - ageMs),
+            },
+          ],
+        },
+        now,
+      ).some((anomaly) => anomaly.trigger === 'REPEATED_FARMER');
+
+    expect(detectsRepeat(60 * 60 * 1000)).toBe(true);
+    expect(detectsRepeat(60 * 60 * 1000 + 1)).toBe(false);
+    expect(detectsRepeat(-1)).toBe(false);
+  });
+
+  it('checks centre-day moisture variation using the candidate as one of five readings', () => {
+    const base = {
+      farmerId: 'farmer-moisture',
+      centreId: 'centre-1',
+      grossKg: 500,
+      tareKg: 10,
+      landAcres: 1,
+      cropType: 'soybean' as const,
+      recentPurchases: [],
+    };
+    const triggers = (sameDayMoisture: number[], moisturePct: number) =>
+      detectAnomalies({ ...base, sameDayMoisture, moisturePct }).some(
+        (anomaly) => anomaly.trigger === 'MOISTURE_VARIANCE',
+      );
+
+    expect(triggers([12, 12, 12, 12], 12)).toBe(true);
+    expect(triggers([12, 12, 12], 12)).toBe(false);
+    expect(triggers([12, 12, 12, 12], 12.5)).toBe(false);
+    expect(triggers([12, 12, 12, 12], 12.49)).toBe(true);
   });
 });

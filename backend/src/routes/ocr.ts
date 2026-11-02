@@ -122,6 +122,7 @@ router.post(
         data: {
           operatorId: req.user!.id,
           imageUrl: imageReference,
+          imageData: `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`,
           rawOcrText: rawText,
           parsedWeight: parsedValues.parsedWeight ?? null,
           parsedMoisture: parsedValues.parsedMoisture ?? null,

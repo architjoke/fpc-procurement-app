@@ -13,7 +13,7 @@ import {
   calculateAmountPaisa,
   calculateNetWeightKg,
 } from '../utils/calculations.js';
-import { detectAnomalies } from '../services/anomaly.js';
+import { detectAnomalies, getUtcDayRange } from '../services/anomaly.js';
 import { getOcrMismatchFields } from '../services/purchaseOcr.js';
 
 const router = Router();
@@ -47,13 +47,59 @@ const createPurchaseSchema = z
 
 const reviewSchema = z.object({
   action: z.enum(['approve', 'reject']),
-  reason: z.string().optional(),
+  reason: z.string().trim().min(1, 'A review reason is required.'),
 });
 
 router.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
-  const status = req.query.status as string | undefined;
+  const status = z
+    .enum(['DRAFT', 'SYNCED', 'FLAGGED', 'APPROVED', 'REJECTED', 'PAID'])
+    .optional()
+    .safeParse(req.query.status);
+  if (!status.success) {
+    return res.status(400).json({ message: 'Invalid purchase status filter.' });
+  }
+  if (status.data === 'FLAGGED' && req.user!.role !== 'office_manager') {
+    return res
+      .status(403)
+      .json({ message: 'Manager access is required to review flagged purchases.' });
+  }
+
+  if (status.data === 'FLAGGED') {
+    const pagination = z
+      .object({
+        page: z.coerce.number().int().min(1).default(1),
+        pageSize: z.coerce.number().int().min(1).max(100).default(20),
+      })
+      .safeParse(req.query);
+    if (!pagination.success) {
+      return res.status(400).json({ message: 'Invalid pagination parameters.' });
+    }
+
+    const { page, pageSize } = pagination.data;
+    const where = { status: 'FLAGGED' as const };
+    const [data, total] = await Promise.all([
+      prisma.purchase.findMany({
+        where,
+        include: {
+          farmer: true,
+          centre: true,
+          crop: true,
+          ocrJobs: { select: { id: true, imageData: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      prisma.purchase.count({ where }),
+    ]);
+    return res.json({
+      data,
+      pagination: { page, pageSize, total, pages: Math.ceil(total / pageSize) },
+    });
+  }
+
   const purchases = await prisma.purchase.findMany({
-    where: { ...centreScope(req.user!), ...(status ? { status: status as never } : {}) },
+    where: { ...centreScope(req.user!), ...(status.data ? { status: status.data } : {}) },
     include: { farmer: true, centre: true, crop: true },
     orderBy: { createdAt: 'desc' },
   });
@@ -175,12 +221,19 @@ router.post(
           farmerId: input.farmerId,
           createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
         },
+        select: { farmerId: true, createdAt: true, centreId: true },
       });
 
+      const { start: dayStart, end: dayEnd } = getUtcDayRange(
+        input.deviceTimestamp ? new Date(input.deviceTimestamp) : new Date(),
+      );
       const sameDayMoisture = await prisma.purchase.findMany({
         where: {
           centreId: farmer.centreId,
-          createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+          OR: [
+            { deviceTimestamp: { gte: dayStart, lt: dayEnd } },
+            { deviceTimestamp: null, createdAt: { gte: dayStart, lt: dayEnd } },
+          ],
         },
         select: { moisturePct: true },
       });
@@ -188,8 +241,29 @@ router.post(
       const rate = price.ratePerQuintal;
       const net = calculateNetWeightKg(input.grossKg, input.tareKg, input.moisturePct);
       const amountPaise = calculateAmountPaisa(net, rate);
+      const anomalies = detectAnomalies({
+        farmerId: input.farmerId,
+        centreId: farmer.centreId,
+        grossKg: input.grossKg,
+        tareKg: input.tareKg,
+        moisturePct: input.moisturePct,
+        landAcres: Number(farmer.landAcres),
+        cropType: crop.name.toLowerCase().includes('tur') ? 'tur' : 'soybean',
+        recentPurchases: recentPurchases.map(
+          (purchase: { farmerId: string; createdAt: Date; centreId: string }) => ({
+            farmerId: purchase.farmerId,
+            createdAt: purchase.createdAt,
+            centreId: purchase.centreId,
+          }),
+        ),
+        sameDayMoisture: sameDayMoisture.map((purchase) => Number(purchase.moisturePct)),
+      });
+      const flagReason =
+        anomalies.length > 0
+          ? anomalies.map((anomaly) => `${anomaly.trigger}: ${anomaly.reason}`).join(' ')
+          : null;
       const purchaseId = uuidv4();
-      const purchaseStatus = 'DRAFT';
+      const purchaseStatus = anomalies.length > 0 ? 'FLAGGED' : 'DRAFT';
 
       const purchase = await prisma.$transaction(async (transaction) => {
         const createdPurchase = await transaction.purchase.create({
@@ -206,6 +280,7 @@ router.post(
             rate,
             amountPaise,
             status: purchaseStatus,
+            flagReason,
             deviceSignature: input.deviceSignature ?? null,
             deviceTimestamp: input.deviceTimestamp ? new Date(input.deviceTimestamp) : null,
             photoUrl: ocrJob?.imageUrl ?? null,
@@ -222,44 +297,22 @@ router.post(
         return createdPurchase;
       });
 
-      const anomalies = detectAnomalies({
-        farmerId: input.farmerId,
-        centreId: farmer.centreId,
-        grossKg: input.grossKg,
-        tareKg: input.tareKg,
-        moisturePct: input.moisturePct,
-        landAcres: Number(farmer.landAcres),
-        cropType: crop.name.toLowerCase().includes('tur') ? 'tur' : 'soybean',
-        recentPurchases: recentPurchases.map(
-          (p: { farmerId: string; createdAt: Date; centreId: string }) => ({
-            farmerId: p.farmerId,
-            createdAt: p.createdAt,
-            centreId: p.centreId,
-          }),
-        ),
-        sameDayMoisture: sameDayMoisture.map((p) => Number(p.moisturePct)),
-      });
-
       if (anomalies.length > 0) {
-        const flaggedPurchase = await prisma.purchase.update({
-          where: { id: purchase.id },
-          data: { status: 'FLAGGED' },
-        });
-
         await prisma.auditTrail.create({
           data: {
             actorUserId: req.user?.id ?? null,
             action: 'flagged_purchase',
             entityType: 'purchase',
-            entityId: flaggedPurchase.id,
+            entityId: purchase.id,
             before: JSON.stringify({ status: 'DRAFT' }),
-            after: JSON.stringify({ status: 'FLAGGED', reasons: anomalies }),
+            after: JSON.stringify({ status: 'FLAGGED', reason: flagReason, reasons: anomalies }),
           },
         });
 
         return res.status(201).json({
-          data: flaggedPurchase,
+          data: purchase,
           anomalies,
+          flagReason,
           message: 'Purchase flagged for review.',
         });
       }
@@ -307,18 +360,28 @@ router.patch(
       if (!parsedId.success) {
         return res.status(400).json({ message: 'Invalid purchase id.' });
       }
-      const { action, reason } = reviewSchema.parse(req.body);
+      const parsedBody = reviewSchema.safeParse(req.body);
+      if (!parsedBody.success) {
+        return res.status(400).json({
+          message: 'A review action and reason are required.',
+          error: parsedBody.error.flatten(),
+        });
+      }
+      const { action, reason } = parsedBody.data;
       const purchase = await prisma.purchase.findUnique({ where: { id: parsedId.data } });
 
       if (!purchase) {
         return res.status(404).json({ message: 'Purchase not found.' });
       }
 
-      const nextStatus = action === 'approve' ? 'APPROVED' : 'DRAFT';
+      if (purchase.status !== 'FLAGGED') {
+        return res.status(409).json({ message: 'Only flagged purchases can be reviewed.' });
+      }
+      const nextStatus = action === 'approve' ? 'APPROVED' : 'REJECTED';
 
       const updated = await prisma.purchase.update({
         where: { id: purchase.id },
-        data: { status: nextStatus },
+        data: { status: nextStatus, flagReason: purchase.flagReason },
       });
 
       await prisma.auditTrail.create({
@@ -328,13 +391,14 @@ router.patch(
           entityType: 'purchase',
           entityId: updated.id,
           before: JSON.stringify({ status: purchase.status }),
-          after: JSON.stringify({ status: nextStatus, reason: reason ?? null }),
+          after: JSON.stringify({ status: nextStatus, reason }),
         },
       });
 
       return res.json({ data: updated, message: `Purchase ${action}d.` });
     } catch (error) {
-      return res.status(400).json({ message: 'Review failed.', error: (error as Error).message });
+      console.error('Purchase review failed:', error);
+      return res.status(500).json({ message: 'Purchase review failed.' });
     }
   },
 );

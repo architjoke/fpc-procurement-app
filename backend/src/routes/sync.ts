@@ -7,6 +7,7 @@ import { requireAuth, requireRole, type AuthenticatedRequest } from '../middlewa
 import { calculateAmountPaisa, calculateNetWeightKg } from '../utils/calculations.js';
 import { verifySyncPurchaseSignature, type SyncPurchasePayload } from '../utils/hmac.js';
 import { getOcrMismatchFields } from '../services/purchaseOcr.js';
+import { detectAnomalies, getUtcDayRange } from '../services/anomaly.js';
 
 const router = Router();
 const nonceTtlMs = 24 * 60 * 60 * 1000;
@@ -170,6 +171,7 @@ router.post(
 
               const farmer = await transaction.farmer.findFirst({
                 where: { id: item.farmer_id, centreId: req.user!.centreId },
+                select: { id: true, centreId: true, landAcres: true },
               });
               if (!farmer) {
                 const reason = 'Farmer does not belong to this centre.';
@@ -301,16 +303,44 @@ router.post(
                 );
               }
 
-              const recentPurchase = await transaction.purchase.findFirst({
+              const recentPurchases = await transaction.purchase.findMany({
                 where: {
                   farmerId: item.farmer_id,
                   createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
                 },
-                select: { id: true },
+                select: { farmerId: true, createdAt: true, centreId: true },
               });
-              if (recentPurchase) {
-                conflicts.push('Farmer already has a purchase within the last 60 minutes.');
-              }
+              const { start: dayStart, end: dayEnd } = getUtcDayRange(timestamp);
+              const sameDayPurchases = await transaction.purchase.findMany({
+                where: {
+                  centreId: item.centre_id,
+                  OR: [
+                    { deviceTimestamp: { gte: dayStart, lt: dayEnd } },
+                    { deviceTimestamp: null, createdAt: { gte: dayStart, lt: dayEnd } },
+                  ],
+                },
+                select: { moisturePct: true },
+              });
+              const anomalyChecks = detectAnomalies({
+                farmerId: item.farmer_id,
+                centreId: item.centre_id,
+                grossKg: item.gross_kg,
+                tareKg: item.tare_kg,
+                moisturePct: item.moisture_pct,
+                landAcres: Number(farmer.landAcres),
+                cropType: crop.name.toLowerCase().includes('tur') ? 'tur' : 'soybean',
+                recentPurchases: recentPurchases.map(
+                  (purchase: { farmerId: string; createdAt: Date; centreId: string }) => ({
+                    farmerId: purchase.farmerId,
+                    createdAt: purchase.createdAt,
+                    centreId: purchase.centreId,
+                  }),
+                ),
+                sameDayMoisture: sameDayPurchases.map((purchase) => Number(purchase.moisturePct)),
+              });
+              conflicts.push(
+                ...anomalyChecks.map((anomaly) => `${anomaly.trigger}: ${anomaly.reason}`),
+              );
 
               const timestampUpdate = await transaction.deviceSession.updateMany({
                 where: {
@@ -353,6 +383,7 @@ router.post(
                   rate: item.rate_per_quintal,
                   amountPaise,
                   status: purchaseStatus,
+                  flagReason: conflicts.length > 0 ? conflicts.join(' ') : null,
                   deviceSignature: item.hmac_signature,
                   deviceTimestamp: timestamp,
                   ocrConfidence: ocrJob?.confidence ?? null,
@@ -374,7 +405,11 @@ router.post(
                     entityType: 'purchase',
                     entityId: purchase.id,
                     before: JSON.stringify({ status: 'SYNCED' }),
-                    after: JSON.stringify({ status: 'FLAGGED', reasons: conflicts }),
+                    after: JSON.stringify({
+                      status: 'FLAGGED',
+                      reason: conflicts.join(' '),
+                      reasons: conflicts,
+                    }),
                   },
                 });
               }

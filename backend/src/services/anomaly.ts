@@ -1,3 +1,18 @@
+import {
+  MAX_YIELD_KG_PER_ACRE,
+  MOISTURE_VARIANCE_LIMIT_PERCENTAGE_POINTS,
+  MOISTURE_VARIANCE_MINIMUM_ENTRIES,
+  REPEAT_PURCHASE_WINDOW_MINUTES,
+} from '../config/anomalyThresholds.js';
+
+export const getUtcDayRange = (date: Date): { start: Date; end: Date } => {
+  const start = new Date(date);
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 1);
+  return { start, end };
+};
+
 export type AnomalyTrigger = 'YIELD_CAP' | 'REPEATED_FARMER' | 'MOISTURE_VARIANCE';
 
 export interface AnomalyCheck {
@@ -5,31 +20,38 @@ export interface AnomalyCheck {
   reason: string;
 }
 
-export const detectAnomalies = (input: {
-  farmerId: string;
-  centreId: string;
-  grossKg: number;
-  tareKg: number;
-  moisturePct: number;
-  landAcres: number;
-  cropType: 'soybean' | 'tur';
-  recentPurchases: Array<{ farmerId: string; createdAt: Date; centreId: string }>;
-  sameDayMoisture: number[];
-}): AnomalyCheck[] => {
+export const detectAnomalies = (
+  input: {
+    farmerId: string;
+    centreId: string;
+    grossKg: number;
+    tareKg: number;
+    moisturePct: number;
+    landAcres: number;
+    cropType: 'soybean' | 'tur';
+    recentPurchases: Array<{ farmerId: string; createdAt: Date; centreId: string }>;
+    sameDayMoisture: number[];
+  },
+  now = new Date(),
+): AnomalyCheck[] => {
   const anomalies: AnomalyCheck[] = [];
   const netKg = input.grossKg - input.tareKg;
-  const capKg = input.cropType === 'soybean' ? 1500 * input.landAcres : 1000 * input.landAcres;
+  const capKg = MAX_YIELD_KG_PER_ACRE[input.cropType] * input.landAcres;
 
   if (netKg > capKg) {
     anomalies.push({
       trigger: 'YIELD_CAP',
-      reason: 'Weight exceeds configured yield cap for the farmer land area.',
+      reason: `Net weight ${netKg.toFixed(1)} kg exceeds the ${input.cropType} yield cap of ${capKg.toFixed(1)} kg for ${input.landAcres} acres.`,
     });
   }
 
   const hasRecentPurchase = input.recentPurchases.some((purchase) => {
-    const diffMinutes = (Date.now() - new Date(purchase.createdAt).getTime()) / 60000;
-    return purchase.farmerId === input.farmerId && diffMinutes <= 60;
+    const ageMs = now.getTime() - new Date(purchase.createdAt).getTime();
+    return (
+      purchase.farmerId === input.farmerId &&
+      ageMs >= 0 &&
+      ageMs <= REPEAT_PURCHASE_WINDOW_MINUTES * 60 * 1000
+    );
   });
 
   if (hasRecentPurchase) {
@@ -39,11 +61,11 @@ export const detectAnomalies = (input: {
     });
   }
 
-  if (input.sameDayMoisture.length >= 5) {
-    const values = [...input.sameDayMoisture];
+  const values = [...input.sameDayMoisture, input.moisturePct];
+  if (values.length >= MOISTURE_VARIANCE_MINIMUM_ENTRIES) {
     const min = Math.min(...values);
     const max = Math.max(...values);
-    if (max - min < 0.5) {
+    if (max - min < MOISTURE_VARIANCE_LIMIT_PERCENTAGE_POINTS) {
       anomalies.push({
         trigger: 'MOISTURE_VARIANCE',
         reason:

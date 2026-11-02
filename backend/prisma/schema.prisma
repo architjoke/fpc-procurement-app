@@ -17,6 +17,7 @@ enum PurchaseStatus {
   SYNCED
   FLAGGED
   APPROVED
+  REJECTED
   PAID
 }
 
@@ -138,6 +139,7 @@ model Purchase {
   rate            Int
   amountPaise     Int              @map("amount_paise")
   status          PurchaseStatus
+  flagReason      String?          @map("flag_reason")
   deviceSignature String?          @map("device_signature")
   deviceTimestamp DateTime?        @map("device_timestamp")
   ocrConfidence   Decimal?         @map("ocr_confidence")
@@ -246,6 +248,7 @@ model OcrJob {
   operatorId     String?   @map("operator_id")
   operator       User?     @relation(fields: [operatorId], references: [id], onDelete: SetNull)
   imageUrl       String    @map("image_url")
+  imageData      String?   @map("image_data")
   rawOcrText     String?   @map("raw_ocr_text")
   parsedWeight   Decimal?  @map("parsed_weight")
   parsedMoisture Decimal?  @map("parsed_moisture")

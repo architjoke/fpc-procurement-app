@@ -23,7 +23,7 @@ export interface PurchaseDraft {
 
 export interface SyncStatusEntry {
   uuid: string;
-  status: 'QUEUED' | 'SYNCING' | 'SYNCED' | 'REJECTED';
+  status: 'QUEUED' | 'SYNCING' | 'SYNCED' | 'REJECTED' | 'FLAGGED';
   reason?: string;
 }
 
@@ -90,7 +90,7 @@ const readStatuses = async (): Promise<SyncStatusEntry[]> => {
     })),
     ...history.map((entry: SyncHistoryEntry) => ({
       uuid: entry.uuid,
-      status: entry.status,
+      status: entry.purchaseStatus === 'FLAGGED' ? ('FLAGGED' as const) : entry.status,
       reason:
         entry.purchaseStatus === 'FLAGGED'
           ? (entry.reason ?? 'Synced and flagged for manager review.')
@@ -256,7 +256,9 @@ export const useOfflineQueue = () => {
   }, [refresh]);
 
   const createPurchase = useCallback(
-    async (draft: PurchaseDraft): Promise<'SAVED' | 'QUEUED'> => {
+    async (
+      draft: PurchaseDraft,
+    ): Promise<{ status: 'SAVED' | 'QUEUED' | 'FLAGGED'; flagReason?: string }> => {
       setError(null);
       const session = getSession();
       if (!session?.accessToken || !session.user.centreId) {
@@ -267,11 +269,13 @@ export const useOfflineQueue = () => {
         const entry = await makeSignedEntry(draft);
         await offlineDb.purchases.put(entry);
         await refresh();
-        return 'QUEUED';
+        return { status: 'QUEUED' };
       }
 
       try {
-        await api.post('/purchases', {
+        const response = await api.post<{
+          data: { status: string; flagReason?: string | null };
+        }>('/purchases', {
           farmerId: draft.farmerId,
           cropId: draft.cropId,
           grade: draft.grade,
@@ -288,7 +292,14 @@ export const useOfflineQueue = () => {
             ? { ocrMoistureReconciled: draft.ocrMoistureReconciled }
             : {}),
         });
-        return 'SAVED';
+        return response.data.data.status === 'FLAGGED'
+          ? {
+              status: 'FLAGGED',
+              ...(response.data.data.flagReason
+                ? { flagReason: response.data.data.flagReason }
+                : {}),
+            }
+          : { status: 'SAVED' };
       } catch (requestError) {
         if (!axios.isAxiosError(requestError)) {
           throw requestError;
@@ -299,7 +310,7 @@ export const useOfflineQueue = () => {
         const entry = await makeSignedEntry(draft);
         await offlineDb.purchases.put(entry);
         await refresh();
-        return 'QUEUED';
+        return { status: 'QUEUED' };
       }
     },
     [refresh],

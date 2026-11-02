@@ -1,0 +1,8 @@
+export const MAX_YIELD_KG_PER_ACRE = {
+  soybean: 1500,
+  tur: 1000,
+} as const;
+
+export const REPEAT_PURCHASE_WINDOW_MINUTES = 60;
+export const MOISTURE_VARIANCE_LIMIT_PERCENTAGE_POINTS = 0.5;
+export const MOISTURE_VARIANCE_MINIMUM_ENTRIES = 5;

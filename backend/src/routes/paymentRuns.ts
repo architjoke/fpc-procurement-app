@@ -18,7 +18,16 @@ router.post(
       const { purchaseIds } = paymentRunSchema.parse(req.body);
       const purchases = (await prisma.purchase.findMany({
         where: { id: { in: purchaseIds } },
-      })) as Array<{ id: string; amountPaise: number }>;
+      })) as Array<{ id: string; amountPaise: number; status: string }>;
+      const ineligiblePurchaseIds = purchases
+        .filter((purchase) => purchase.status !== 'APPROVED')
+        .map((purchase) => purchase.id);
+      if (ineligiblePurchaseIds.length > 0) {
+        return res.status(400).json({
+          message: 'Only approved purchases are eligible for a payment run.',
+          ineligiblePurchaseIds,
+        });
+      }
 
       const totalAmountPaise = purchases.reduce(
         (sum: number, purchase: { amountPaise: number }) => sum + purchase.amountPaise,

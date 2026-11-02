@@ -40,6 +40,171 @@ interface OcrFailure {
   message?: string;
 }
 
+interface FlaggedPurchase {
+  id: string;
+  flagReason: string | null;
+  createdAt: string;
+  amountPaise: number;
+  farmer: { memberId: string; name: string };
+  crop: { name: string };
+  photoUrl: string | null;
+  ocrJobs: Array<{ id: string; imageData: string | null }>;
+}
+
+const ManagerReview = () => {
+  const [purchases, setPurchases] = useState<FlaggedPurchase[]>([]);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [actingId, setActingId] = useState('');
+  const [error, setError] = useState('');
+
+  const loadFlagged = async (targetPage: number) => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data } = await api.get<{
+        data: FlaggedPurchase[];
+        pagination: { pages: number };
+      }>('/purchases', { params: { status: 'FLAGGED', page: targetPage, pageSize: 20 } });
+      setPurchases(data.data);
+      setPages(data.pagination.pages);
+      setPage(targetPage);
+    } catch (loadError) {
+      console.error('Unable to load flagged purchases:', loadError);
+      setError('Could not load flagged purchases. Please retry.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadFlagged(1);
+  }, []);
+
+  const review = async (purchaseId: string, action: 'approve' | 'reject') => {
+    const reason = reasons[purchaseId]?.trim();
+    if (!reason) {
+      setError('Enter a review reason before approving or rejecting a purchase.');
+      return;
+    }
+    setActingId(purchaseId);
+    setError('');
+    try {
+      await api.patch(`/purchases/${purchaseId}/review`, { action, reason });
+      setReasons((current) => {
+        const next = { ...current };
+        delete next[purchaseId];
+        return next;
+      });
+      await loadFlagged(page);
+    } catch (reviewError) {
+      console.error('Unable to review flagged purchase:', reviewError);
+      setError('Could not save this review. Please retry.');
+    } finally {
+      setActingId('');
+    }
+  };
+
+  return (
+    <main className="shell">
+      <section className="card">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Manager review</p>
+            <h2>Flagged purchases</h2>
+          </div>
+          <button className="button secondary" onClick={() => void loadFlagged(page)}>
+            Refresh
+          </button>
+        </div>
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        {loading ? (
+          <p>Loading flagged purchases…</p>
+        ) : purchases.length === 0 ? (
+          <p>No purchases are waiting for review.</p>
+        ) : (
+          <ul className="review-list">
+            {purchases.map((purchase) => (
+              <li key={purchase.id} className="review-item">
+                {purchase.ocrJobs.find((job) => job.imageData)?.imageData && (
+                  <img
+                    className="review-thumbnail"
+                    src={purchase.ocrJobs.find((job) => job.imageData)?.imageData ?? ''}
+                    alt={`OCR image for ${purchase.farmer.name}`}
+                  />
+                )}
+                <div className="review-details">
+                  <strong>
+                    {purchase.farmer.memberId} — {purchase.farmer.name}
+                  </strong>
+                  <span>
+                    {purchase.crop.name} · ₹{(purchase.amountPaise / 100).toFixed(2)}
+                  </span>
+                  <small>{purchase.flagReason ?? 'Flagged for manager review.'}</small>
+                  <label>
+                    Review reason
+                    <input
+                      value={reasons[purchase.id] ?? ''}
+                      onChange={(event) =>
+                        setReasons((current) => ({ ...current, [purchase.id]: event.target.value }))
+                      }
+                      required
+                      placeholder="Required for approval or rejection"
+                    />
+                  </label>
+                  <div className="actions review-actions">
+                    <button
+                      className="button primary"
+                      disabled={actingId === purchase.id}
+                      onClick={() => void review(purchase.id, 'approve')}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      className="button danger"
+                      disabled={actingId === purchase.id}
+                      onClick={() => void review(purchase.id, 'reject')}
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {pages > 1 && (
+          <div className="actions">
+            <button
+              className="button secondary"
+              disabled={page <= 1}
+              onClick={() => void loadFlagged(page - 1)}
+            >
+              Previous
+            </button>
+            <span>
+              Page {page} of {pages}
+            </span>
+            <button
+              className="button secondary"
+              disabled={page >= pages}
+              onClick={() => void loadFlagged(page + 1)}
+            >
+              Next
+            </button>
+          </div>
+        )}
+      </section>
+    </main>
+  );
+};
+
 const Home = () => (
   <main className="shell">
     <section className="card hero">
@@ -130,6 +295,7 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [flaggedReason, setFlaggedReason] = useState('');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [photoPreview, setPhotoPreview] = useState('');
   const [ocrJobId, setOcrJobId] = useState('');
@@ -307,7 +473,14 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
         ...(weightDiffers ? { ocrWeightReconciled: weightConfirmed } : {}),
         ...(moistureDiffers ? { ocrMoistureReconciled: moistureConfirmed } : {}),
       });
-      setNotice(result === 'QUEUED' ? 'Saved securely for offline sync.' : 'Purchase saved.');
+      setNotice(
+        result.status === 'QUEUED'
+          ? 'Saved securely for offline sync.'
+          : result.status === 'FLAGGED'
+            ? 'Purchase saved and flagged for manager review.'
+            : 'Purchase saved.',
+      );
+      setFlaggedReason(result.status === 'FLAGGED' ? (result.flagReason ?? '') : '');
       setGrossKg('');
       setTareKg('');
       setMoisturePct('');
@@ -521,6 +694,11 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
                 {error}
               </p>
             )}
+            {flaggedReason && (
+              <p className="flag-banner" role="status">
+                Under review by procurement manager. {flaggedReason}
+              </p>
+            )}
             {notice && (
               <p className="success full-span" role="status">
                 {notice}
@@ -555,6 +733,9 @@ const PurchaseCapture = ({ session }: { session: AuthSession | null }) => {
                   {entry.reason && <small>{entry.reason}</small>}
                 </div>
                 <span className={`sync-status ${entry.status.toLowerCase()}`}>{entry.status}</span>
+                {entry.status === 'FLAGGED' && (
+                  <strong className="flag-banner">Under review by procurement manager</strong>
+                )}
                 {entry.status === 'REJECTED' && (
                   <button className="text-button" onClick={() => void retry(entry.uuid)}>
                     Retry
@@ -592,6 +773,7 @@ export default function App() {
         <Link to="/">Home</Link>
         <Link to="/login">Login</Link>
         <Link to="/purchases">Capture purchase</Link>
+        {session?.user.role === 'office_manager' && <Link to="/review">Flagged review</Link>}
         {session && (
           <button className="text-button" onClick={() => void logout()}>
             Sign out
@@ -611,7 +793,26 @@ export default function App() {
             />
           }
         />
-        <Route path="/purchases" element={<PurchaseCapture session={session} />} />
+        <Route
+          path="/purchases"
+          element={
+            session?.user.role === 'office_manager' ? (
+              <ManagerReview />
+            ) : (
+              <PurchaseCapture session={session} />
+            )
+          }
+        />
+        <Route
+          path="/review"
+          element={
+            session?.user.role === 'office_manager' ? (
+              <ManagerReview />
+            ) : (
+              <PurchaseCapture session={session} />
+            )
+          }
+        />
       </Routes>
     </div>
   );

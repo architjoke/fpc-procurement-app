@@ -244,6 +244,60 @@ select {
   color: #7a5100;
 }
 
+.sync-status.flagged,
+.flag-banner {
+  color: #854d0e;
+  background: #fef3c7;
+}
+
+.flag-banner {
+  display: block;
+  padding: 0.75rem;
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+.review-list {
+  display: grid;
+  gap: 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.review-item {
+  display: flex;
+  gap: 1rem;
+  padding: 1rem 0;
+  border-top: 1px solid #edf0f2;
+}
+
+.review-thumbnail {
+  width: 140px;
+  height: 110px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.review-details {
+  display: grid;
+  gap: 0.5rem;
+  flex: 1;
+}
+
+.review-details small {
+  color: #854d0e;
+}
+
+.review-actions {
+  justify-content: flex-start;
+  margin: 0;
+}
+
+.button.danger {
+  color: white;
+  background: #b42318;
+}
+
 .sync-list {
   margin: 1rem 0 0;
   padding: 0;

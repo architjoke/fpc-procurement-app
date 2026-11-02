@@ -48,6 +48,20 @@ The project is split into a plain Express + TypeScript backend and a Vite + Reac
 - Tare weight cannot exceed gross weight; calculated net weight is rounded to one decimal before pricing.
 - Entry review and audit logging are enforced for flagged purchases.
 
+### Anomaly review rules
+
+| Trigger             | Rule                                                                                                        | Handling                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `YIELD_CAP`         | Net weight exceeds 1,500 kg per soybean acre or 1,000 kg per tur acre. Equality at the cap is allowed.      | Persist as `FLAGGED`; include measured and configured limit in the reason. |
+| `REPEATED_FARMER`   | Same farmer has any purchase in the preceding 60 minutes, whether created online or synced.                 | Persist as `FLAGGED`; do not cancel or overwrite either purchase.          |
+| `MOISTURE_VARIANCE` | Including the current reading, at least five same-centre/day readings span less than 0.5 percentage points. | Persist as `FLAGGED`; exact 0.5-point variance does not trigger.           |
+
+Moisture comparisons use UTC calendar days and match purchase device timestamps when present;
+older purchases without a device timestamp use their recorded creation date.
+Managers review flagged purchases with a required reason. Approval changes `FLAGGED` to
+`APPROVED`; rejection changes it to `REJECTED`. Both decisions are written to `audit_trail`.
+Flagged purchases are excluded from payment runs and do not generate SMS slips.
+
 ## OCR flow
 
 1. An authenticated centre operator uploads a JPEG, PNG, GIF, or WebP photo (maximum 1 MiB).
