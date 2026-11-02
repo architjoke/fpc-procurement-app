@@ -1,20 +1,22 @@
 import { Router } from 'express';
 import { prisma } from '../config/database.js';
-import { requireAuth } from '../middleware/auth.js';
+import { centreScope, requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 
-router.get('/dashboard/summary', requireAuth, async (_req, res) => {
+router.get('/dashboard/summary', requireAuth, async (req: AuthenticatedRequest, res) => {
   const today = new Date();
   const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const scope = centreScope(req.user!);
 
   const [purchasesToday, pending, byCentre] = await Promise.all([
-    prisma.purchase.count({ where: { createdAt: { gte: startOfDay } } }),
+    prisma.purchase.count({ where: { ...scope, createdAt: { gte: startOfDay } } }),
     prisma.purchase.aggregate({
       _sum: { amountPaise: true },
-      where: { status: { in: ['DRAFT', 'FLAGGED', 'APPROVED'] } },
+      where: { ...scope, status: { in: ['DRAFT', 'FLAGGED', 'APPROVED'] } },
     }),
     prisma.centre.findMany({
+      where: scope,
       include: { purchases: true },
     }),
   ]);

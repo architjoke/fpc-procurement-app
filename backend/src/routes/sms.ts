@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import { prisma } from '../config/database.js';
-import { requireAuth } from '../middleware/auth.js';
+import { centreScope, requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 
-router.get('/:purchaseId', requireAuth, async (req, res) => {
-  const purchase = await prisma.purchase.findUnique({
-    where: { id: req.params.purchaseId },
+router.get('/:purchaseId', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const purchase = await prisma.purchase.findFirst({
+    where: { id: req.params.purchaseId, ...centreScope(req.user!) },
     include: { farmer: true, crop: true, centre: true },
   });
 

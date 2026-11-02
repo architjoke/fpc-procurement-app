@@ -2,7 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../config/database.js';
-import { requireAuth, requireRole, type AuthenticatedRequest } from '../middleware/auth.js';
+import {
+  centreScope,
+  requireAuth,
+  requireRole,
+  type AuthenticatedRequest,
+} from '../middleware/auth.js';
 import {
   buildMarathiSmsSlip,
   calculateAmountPaisa,
@@ -32,161 +37,169 @@ const reviewSchema = z.object({
   reason: z.string().optional(),
 });
 
-router.get('/', requireAuth, async (req, res) => {
+router.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
   const status = req.query.status as string | undefined;
   const purchases = await prisma.purchase.findMany({
-    where: status ? { status: status as never } : undefined,
+    where: { ...centreScope(req.user!), ...(status ? { status: status as never } : {}) },
     include: { farmer: true, centre: true, crop: true },
     orderBy: { createdAt: 'desc' },
   });
   return res.json({ data: purchases });
 });
 
-router.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
-  try {
-    const input = createPurchaseSchema.parse(req.body);
+router.post(
+  '/',
+  requireAuth,
+  requireRole('centre_operator'),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const input = createPurchaseSchema.parse(req.body);
 
-    if (input.ocrWeight != null && Math.abs(input.grossKg - input.ocrWeight) > 0.1) {
-      return res.status(400).json({
-        message: 'OCR value differs from the entered weight. Please reconcile before saving.',
+      if (input.ocrWeight != null && Math.abs(input.grossKg - input.ocrWeight) > 0.1) {
+        return res.status(400).json({
+          message: 'OCR value differs from the entered weight. Please reconcile before saving.',
+        });
+      }
+
+      if (input.ocrMoisture != null && Math.abs(input.moisturePct - input.ocrMoisture) > 0.1) {
+        return res.status(400).json({
+          message: 'OCR value differs from the entered moisture. Please reconcile before saving.',
+        });
+      }
+
+      const farmer = await prisma.farmer.findUnique({
+        where: { id: input.farmerId },
+        include: { centre: true },
       });
-    }
+      if (!farmer) {
+        return res.status(404).json({ message: 'Farmer not found.' });
+      }
+      if (farmer.centreId !== req.user?.centreId) {
+        return res.status(403).json({ message: 'Cannot create a purchase for another centre.' });
+      }
 
-    if (input.ocrMoisture != null && Math.abs(input.moisturePct - input.ocrMoisture) > 0.1) {
-      return res.status(400).json({
-        message: 'OCR value differs from the entered moisture. Please reconcile before saving.',
+      const crop = await prisma.crop.findUnique({ where: { id: input.cropId } });
+      if (!crop) {
+        return res.status(404).json({ message: 'Crop not found.' });
+      }
+
+      const rate = input.ratePerQuintal;
+      const net = calculateNetWeightKg(input.grossKg, input.tareKg, input.moisturePct);
+      const amountPaise = calculateAmountPaisa(net, rate);
+      const purchaseId = uuidv4();
+      const purchaseStatus = 'DRAFT';
+
+      const purchase = await prisma.purchase.create({
+        data: {
+          uuid: purchaseId,
+          farmerId: input.farmerId,
+          centreId: farmer.centreId,
+          cropId: input.cropId,
+          grade: input.grade,
+          grossKg: input.grossKg,
+          tareKg: input.tareKg,
+          moisturePct: input.moisturePct,
+          netKg: net,
+          rate,
+          amountPaise,
+          status: purchaseStatus,
+          deviceSignature: input.deviceSignature ?? null,
+          deviceTimestamp: input.deviceTimestamp ? new Date(input.deviceTimestamp) : null,
+          photoUrl: input.photoUrl ?? null,
+          ocrConfidence: input.ocrWeight != null ? 0.92 : null,
+        },
+        include: { farmer: true, centre: true, crop: true },
       });
-    }
 
-    const farmer = await prisma.farmer.findUnique({
-      where: { id: input.farmerId },
-      include: { centre: true },
-    });
-    if (!farmer) {
-      return res.status(404).json({ message: 'Farmer not found.' });
-    }
+      const recentPurchases = await prisma.purchase.findMany({
+        where: {
+          farmerId: input.farmerId,
+          createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
+        },
+      });
 
-    const crop = await prisma.crop.findUnique({ where: { id: input.cropId } });
-    if (!crop) {
-      return res.status(404).json({ message: 'Crop not found.' });
-    }
+      const sameDayMoisture = await prisma.purchase.findMany({
+        where: {
+          centreId: farmer.centreId,
+          createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+        },
+        select: { moisturePct: true },
+      });
 
-    const rate = input.ratePerQuintal;
-    const net = calculateNetWeightKg(input.grossKg, input.tareKg, input.moisturePct);
-    const amountPaise = calculateAmountPaisa(net, rate);
-    const purchaseId = uuidv4();
-    const purchaseStatus = 'DRAFT';
-
-    const purchase = await prisma.purchase.create({
-      data: {
-        uuid: purchaseId,
+      const anomalies = detectAnomalies({
         farmerId: input.farmerId,
         centreId: farmer.centreId,
-        cropId: input.cropId,
-        grade: input.grade,
+        grossKg: input.grossKg,
+        tareKg: input.tareKg,
+        moisturePct: input.moisturePct,
+        landAcres: Number(farmer.landAcres),
+        cropType: crop.name.toLowerCase().includes('tur') ? 'tur' : 'soybean',
+        recentPurchases: recentPurchases.map(
+          (p: { farmerId: string; createdAt: Date; centreId: string }) => ({
+            farmerId: p.farmerId,
+            createdAt: p.createdAt,
+            centreId: p.centreId,
+          }),
+        ),
+        sameDayMoisture: sameDayMoisture.map((p: { moisturePct: number | string | null }) =>
+          Number(p.moisturePct),
+        ),
+      });
+
+      if (anomalies.length > 0) {
+        const flaggedPurchase = await prisma.purchase.update({
+          where: { id: purchase.id },
+          data: { status: 'FLAGGED' },
+        });
+
+        await prisma.auditTrail.create({
+          data: {
+            actorUserId: req.user?.id ?? null,
+            action: 'flagged_purchase',
+            entityType: 'purchase',
+            entityId: flaggedPurchase.id,
+            before: JSON.stringify({ status: 'DRAFT' }),
+            after: JSON.stringify({ status: 'FLAGGED', reasons: anomalies }),
+          },
+        });
+
+        return res.status(201).json({
+          data: flaggedPurchase,
+          anomalies,
+          message: 'Purchase flagged for review.',
+        });
+      }
+
+      const smsText = buildMarathiSmsSlip({
+        memberId: farmer.memberId,
+        farmerName: farmer.name,
+        cropName: crop.name,
         grossKg: input.grossKg,
         tareKg: input.tareKg,
         moisturePct: input.moisturePct,
         netKg: net,
-        rate,
-        amountPaise,
-        status: purchaseStatus,
-        deviceSignature: input.deviceSignature ?? null,
-        deviceTimestamp: input.deviceTimestamp ? new Date(input.deviceTimestamp) : null,
-        photoUrl: input.photoUrl ?? null,
-        ocrConfidence: input.ocrWeight != null ? 0.92 : null,
-      },
-      include: { farmer: true, centre: true, crop: true },
-    });
-
-    const recentPurchases = await prisma.purchase.findMany({
-      where: {
-        farmerId: input.farmerId,
-        createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
-      },
-    });
-
-    const sameDayMoisture = await prisma.purchase.findMany({
-      where: {
-        centreId: farmer.centreId,
-        createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
-      },
-      select: { moisturePct: true },
-    });
-
-    const anomalies = detectAnomalies({
-      farmerId: input.farmerId,
-      centreId: farmer.centreId,
-      grossKg: input.grossKg,
-      tareKg: input.tareKg,
-      moisturePct: input.moisturePct,
-      landAcres: Number(farmer.landAcres),
-      cropType: crop.name.toLowerCase().includes('tur') ? 'tur' : 'soybean',
-      recentPurchases: recentPurchases.map(
-        (p: { farmerId: string; createdAt: Date; centreId: string }) => ({
-          farmerId: p.farmerId,
-          createdAt: p.createdAt,
-          centreId: p.centreId,
-        }),
-      ),
-      sameDayMoisture: sameDayMoisture.map((p: { moisturePct: number | string | null }) =>
-        Number(p.moisturePct),
-      ),
-    });
-
-    if (anomalies.length > 0) {
-      const flaggedPurchase = await prisma.purchase.update({
-        where: { id: purchase.id },
-        data: { status: 'FLAGGED' },
+        ratePerQuintal: rate,
+        amountPaise: amountPaise,
+        centreCode: farmer.centre.code,
       });
 
-      await prisma.auditTrail.create({
+      await prisma.smsOutbox.create({
         data: {
-          actorUserId: req.user?.id ?? null,
-          action: 'flagged_purchase',
-          entityType: 'purchase',
-          entityId: flaggedPurchase.id,
-          before: JSON.stringify({ status: 'DRAFT' }),
-          after: JSON.stringify({ status: 'FLAGGED', reasons: anomalies }),
+          purchaseId: purchase.id,
+          phone: '0000000000',
+          messageMarathi: smsText,
+          status: 'QUEUED',
         },
       });
 
-      return res.status(201).json({
-        data: flaggedPurchase,
-        anomalies,
-        message: 'Purchase flagged for review.',
-      });
+      return res.status(201).json({ data: purchase, message: 'Purchase created.' });
+    } catch (error) {
+      return res
+        .status(400)
+        .json({ message: 'Invalid purchase payload.', error: (error as Error).message });
     }
-
-    const smsText = buildMarathiSmsSlip({
-      memberId: farmer.memberId,
-      farmerName: farmer.name,
-      cropName: crop.name,
-      grossKg: input.grossKg,
-      tareKg: input.tareKg,
-      moisturePct: input.moisturePct,
-      netKg: net,
-      ratePerQuintal: rate,
-      amountPaise: amountPaise,
-      centreCode: farmer.centre.code,
-    });
-
-    await prisma.smsOutbox.create({
-      data: {
-        purchaseId: purchase.id,
-        phone: '0000000000',
-        messageMarathi: smsText,
-        status: 'QUEUED',
-      },
-    });
-
-    return res.status(201).json({ data: purchase, message: 'Purchase created.' });
-  } catch (error) {
-    return res
-      .status(400)
-      .json({ message: 'Invalid purchase payload.', error: (error as Error).message });
-  }
-});
+  },
+);
 
 router.patch(
   '/:id/review',

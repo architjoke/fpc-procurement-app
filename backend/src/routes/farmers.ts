@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/database.js';
-import { requireAuth } from '../middleware/auth.js';
+import { centreScope, requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -16,14 +16,17 @@ const farmerSchema = z.object({
   consentGivenAt: z.string().datetime().optional(),
 });
 
-router.get('/', requireAuth, async (_req, res) => {
-  const farmers = await prisma.farmer.findMany({ include: { centre: true } });
+router.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const farmers = await prisma.farmer.findMany({
+    where: centreScope(req.user!),
+    include: { centre: true },
+  });
   return res.json({ data: farmers });
 });
 
-router.get('/:id', requireAuth, async (req, res) => {
-  const farmer = await prisma.farmer.findUnique({
-    where: { id: req.params.id },
+router.get('/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const farmer = await prisma.farmer.findFirst({
+    where: { id: req.params.id, ...centreScope(req.user!) },
     include: { centre: true },
   });
 
@@ -34,9 +37,12 @@ router.get('/:id', requireAuth, async (req, res) => {
   return res.json({ data: farmer });
 });
 
-router.post('/', requireAuth, async (req, res) => {
+router.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const input = farmerSchema.parse(req.body);
+    if (req.user?.role === 'centre_operator' && input.centreId !== req.user.centreId) {
+      return res.status(403).json({ message: 'Cannot create a farmer for another centre.' });
+    }
     const farmer = await prisma.farmer.create({
       data: {
         memberId: input.memberId,

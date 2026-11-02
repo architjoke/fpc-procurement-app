@@ -47,6 +47,24 @@ router.post(
       const rejected: { uuid: string; reason: string }[] = [];
 
       for (const item of payload.items) {
+        const farmer = await prisma.farmer.findFirst({
+          where: { id: item.farmerId, centreId: req.user?.centreId ?? '' },
+        });
+
+        if (!farmer) {
+          const reason = 'Farmer does not belong to this centre.';
+          rejected.push({ uuid: item.uuid, reason });
+          await prisma.syncLog.create({
+            data: {
+              purchaseUuid: item.uuid,
+              deviceId: payload.deviceId,
+              status: 'REJECTED',
+              reason,
+            },
+          });
+          continue;
+        }
+
         const isDuplicate = await prisma.purchase.findFirst({
           where: {
             farmerId: item.farmerId,
