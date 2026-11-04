@@ -250,8 +250,8 @@ export const useOfflineQueue = () => {
           } else {
             await offlineDb.purchases.put({
               ...queuedEntry,
-              syncStatus: 'REJECTED',
-              lastError: result.reason ?? 'Server rejected this purchase.',
+              syncStatus: 'QUEUED',
+              lastError: result.reason ?? 'Server rejected this purchase. Will retry.',
             });
           }
         }
