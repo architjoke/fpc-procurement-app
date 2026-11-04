@@ -1,51 +1,58 @@
-# Final completeness audit
+# Final end-to-end verification
+
+Run on 2026-11-04 against the local Docker Compose PostgreSQL database and Vite/Express development servers.
 
 ## Core build checklist
 
-- [x] Member registry — farmer ID, village, land, verified bank account; operator scoped to own centre; no Aadhaar anywhere
-  - PASS — Prisma schema and centre-scoped auth routes enforce farmer + bank data only; no Aadhaar field exists in schema, tests, or docs. Evidence: `backend/prisma/schema.prisma` + `backend/src/routes/farmers.ts` + `backend/src/middleware/auth.ts`.
-- [x] Offline collection entry — find member, crop, gross/tare, moisture, grade, rate of day, net amount; works offline via Dexie queue; Marathi SMS slip generated
-  - PASS — `frontend/src/pages/OperatorFlow.tsx` captures purchase flow and `frontend/src/hooks/useOfflineQueue.ts` persists queue entries offline; SMS route and mock slip tests cover Marathi output. Evidence: `backend/src/tests/sms.test.ts`, `backend/src/tests/api.test.ts`.
-- [x] Daily price board — per crop and grade, set centrally by manager, same price same day enforced, pushed to all centres
-  - PASS — backend price-board routes plus schema enforce per crop/grade/day rules; manager-controlled update flow exists in frontend. Evidence: `backend/src/routes/priceBoard.ts` + `backend/src/tests/businessRules.test.ts`.
-- [x] Payment run — approved purchases grouped into bank bulk CSV, per-farmer status, re-export blocked (Bug-001 fix verified)
-  - PASS — payment run creation/export is implemented and second export is rejected with 409. Evidence: `backend/src/tests/api.test.ts` (`blocks re-export of an already exported payment run`).
-- [x] Roles — centre_operator and office_manager, with real access control at query layer (not just middleware)
-  - PASS — auth middleware plus route-level centre and role checks are enforced; manager and operator actions are separated at the API layer. Evidence: `backend/src/middleware/auth.ts` + route guards in `backend/src/routes/*`.
-- [x] AI/OCR — photo upload -> OCR.space -> prefilled values beside photo -> operator confirms; mismatch blocks save; anomaly flags (yield cap, 60-min duplicate, moisture uniformity) hold payment for manager review, never cancel
-  - PASS — OCR parse flow, mismatch enforcement, and anomaly review workflow are implemented and tested. Evidence: `backend/src/tests/ocr.test.ts`, `backend/src/tests/businessRules.test.ts`, `backend/src/routes/ocr.ts`.
-- [x] Offline sync — HMAC tamper-proof, replay/timestamp checks, conflicts FLAGGED not overwritten, rejected entries retryable (Bug-002 fix verified)
-  - PASS — HMAC sync flow and retryable queue logic are implemented; transient rejection stays queued with `lastError` for retry. Evidence: `frontend/src/hooks/useOfflineQueue.ts` + `backend/src/routes/sync.ts` + backend API tests.
-- [x] Marathi SMS — exact template, all values present, idempotent, readable in 5 seconds
-  - PASS — SMS slip renderer matches required text and `GET /api/v1/sms/:purchaseId` returns the stored preview. Evidence: `backend/src/tests/sms.test.ts` + `backend/src/services/sms.ts`.
+- [x] **PASS — Member registry:** farmer IDs, village/land details, and bank information are modeled; farmer access is centre-scoped; no Aadhaar field is present. Evidence: schema and farmer-route review; operator login and centre farmer list loaded in browser.
+- [x] **PASS — Offline collection entry and SMS:** online purchase flow saved a Soybean Grade A purchase (100 kg gross, 2 kg tare, 12% moisture, 98 kg net, ₹4,753.00) and displayed the Marathi SMS slip with the purchase values. Evidence: browser flow on 2026-11-04; API and SMS tests.
+- [ ] **PARTIAL — Daily price board:** backend manager endpoints and daily crop/grade price rules exist and are covered by tests, but there is no manager price-board screen in the frontend routes. This is a UI completeness gap, not verified end-to-end in the UI.
+- [x] **PASS — Payment run:** approved purchases appear in manager payment-run history; API smoke test created and approved a run, exported CSV (200), then received 409 on a second export. Evidence: live API smoke test and manager payment-run screen.
+- [x] **PASS — Roles and access control:** operator and manager demo logins both succeeded; route guards and API role/centre scopes enforce access. Evidence: live browser logins and route/middleware review.
+- [ ] **PARTIAL — OCR and anomaly review:** OCR provider, mismatch checks, anomaly rules, and manager review are implemented and covered by tests. The browser purchase was completed without OCR, and a live OCR.space scan was not run because no OCR API key is configured. Flagged review is implemented; the separate manager dashboard UI is missing.
+- [ ] **PARTIAL — Offline sync:** HMAC signing, replay/timestamp checks, and retryable queue handling are implemented; transient failed results remain queued with `lastError`. Automated backend tests and code review cover the sync contract, but a browser offline/reconnect retry was not exercised in this run.
+- [x] **PASS — Marathi SMS:** live purchase confirmation displayed the Marathi slip with farmer, crop, weights, moisture, rate, amount, and centre; SMS template/idempotency tests pass.
 
 ## Frontend completeness checklist
 
-- [x] Login (with 3D background, lazy-loaded Three.js)
-  - PASS — `frontend/src/pages/LoginPage.tsx` uses `lazy` + `Suspense` and the animated grain field background. Loading + error states exist.
-- [x] Operator: Find Farmer
-  - PASS — `OperatorFlow` includes farmer lookup and selection with empty/loading/error handling.
-- [x] Operator: New Purchase (multi-step wizard with OCR step)
-  - PASS — purchase wizard is implemented in `OperatorFlow.tsx`, including OCR reconciliation and queue states.
-- [x] Operator: Purchase Detail (with SMS preview)
-  - PASS — purchase detail and SMS preview UI is included in the operator flow with preview/error handling.
-- [x] Manager: Price Board
-  - PASS — the manager flow includes price-board data and updates in the app shell and manager actions.
-- [x] Manager: Flagged Review
-  - PASS — `ManagerReview` exposes review reason, approve/reject actions, and pagination/empty/error states.
-- [x] Manager: Payment Run (create + export)
-  - PASS — `PaymentManagement` creates runs, approves them, and exports CSV; second export is blocked by backend contract.
-- [x] Manager: Dashboard
-  - PASS — dashboard summary route and app shell display summary widgets are present.
-- [x] Offline/Sync status indicator
-  - PASS — queue dock in `OperatorShell` shows online/offline state and retry actions.
+- [x] **PASS — Login:** lazy-loaded background and role-based login tested in browser for operator and manager.
+- [x] **PASS — Operator: Find Farmer:** seeded farmer list loaded and was usable in browser.
+- [ ] **PARTIAL — Operator: New Purchase:** four-step purchase flow saved successfully in browser; OCR upload/reconciliation was not exercised with a real OCR provider.
+- [ ] **PARTIAL — Operator: Purchase Detail:** purchase confirmation and SMS preview were exercised; the standalone purchase-detail route was not separately smoke-tested.
+- [ ] **FAIL — Manager: Price Board:** no price-board frontend screen or route exists; backend API only.
+- [x] **PASS — Manager: Flagged Review:** manager route loaded and showed its empty state; approval behavior was verified in the live API smoke test.
+- [x] **PASS — Manager: Payment Run:** manager history loaded; payment-run create/approve/export and re-export rejection were verified by the live API smoke test.
+- [ ] **FAIL — Manager: Dashboard:** dashboard summary API exists, but no manager dashboard screen or route exists in the frontend.
+- [x] **PASS — Offline/Sync indicator:** operator queue dock shows online/offline and sync status; code path includes retry action.
 
-### Screen validation notes
+## Responsive check
 
-- Loading, empty, and error states are implemented across the main operator and manager flows.
-- Visible actions are wired to real handlers; no dead buttons were found in the reviewed app routes.
-- The UI is designed responsively and remains usable at 360px widths via stacked cards, responsive inputs, and mobile-first spacing.
+- At 360 CSS pixels, the Find Farmer screen had no horizontal overflow.
+- The Manager Payment Runs screen initially overflowed by a few pixels. The run-history labels were made wrap-safe; recheck at 360 CSS pixels reported a 360-pixel document width and no overflowing elements.
+- Other routes were not exhaustively checked at 360 pixels; responsive verification is therefore partial rather than a blanket pass.
 
-## Final verdict
+## Local end-to-end run
 
-Status: PASS overall for the submitted build, with the two confirmed bug fixes implemented and validated and the documentation set updated for final submission readiness.
+- Docker PostgreSQL service: running.
+- `npm run migrate --prefix backend`: passed; pending SMS idempotency migration applied and Prisma Client generated.
+- `npm run seed --prefix backend`: passed; demo sample data loaded.
+- `npm run dev`: backend and frontend started successfully.
+- Browser: operator login, farmer search, multi-step purchase, and Marathi SMS preview passed; manager login, flagged-review empty state, and payment-run history loaded.
+- API smoke: flagged repeat purchase, manager approval, payment-run creation/approval, first CSV export (200), and re-export rejection (409) passed.
+- Repository screenshot: [docs/screenshots/manager-payment-runs.png](./screenshots/manager-payment-runs.png).
+
+## Automated validation
+
+- Backend: 73/73 tests passed (`cd backend && npm test -- --run`).
+- Typecheck: passed (`npm run typecheck`).
+- Backend production build: passed (`npm run build --prefix backend`).
+- Frontend production build: passed (`npm run build --prefix frontend`).
+- Formatting: passed (`npm run format`).
+
+## Remaining submission gaps
+
+- Implement or explicitly exclude the manager Price Board and Dashboard UI according to the final client acceptance criteria.
+- Configure OCR.space credentials and run a real provider scan before claiming live OCR verification.
+- Exercise offline capture/retry in a browser with network interruption.
+- Complete responsive checks for every route at 360 pixels.
+- The app is local-only and not deployed; no live app URL is available.

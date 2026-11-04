@@ -1,6 +1,6 @@
 # Farmers Payment App
 
-Repository URL: TBD — set to the GitHub repo before public submission.
+Repository URL: https://github.com/architjoke/fpc-procurement-app
 Live app URL: local only, not deployed; run locally via Docker Compose + Vite + Express.
 
 ## 1) Architecture

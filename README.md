@@ -4,56 +4,65 @@ Offline-first procurement and payment MVP for a farmer producer company in Mahar
 
 ## Tech stack
 
-- Backend: Express + TypeScript + Prisma + PostgreSQL
-- Frontend: React + Vite + TypeScript
-- Offline sync: Dexie + IndexedDB + HMAC-SHA256 device signatures
-- AI/OCR: OCR.space provider (with mock fallback for CI and local regression tests)
-- Auth: JWT access + refresh tokens
-
-## Prerequisites
-
-- Node.js 20+
-- Docker for local PostgreSQL
-- npm
+- Backend: Express, TypeScript, Prisma, PostgreSQL
+- Frontend: React, Vite, TypeScript
+- Offline sync: Dexie, IndexedDB, HMAC-SHA256 device signatures
+- OCR: OCR.space provider with a mock provider for local testing
+- Authentication: JWT access and refresh tokens
 
 ## Quick start
 
-1. Start Docker Desktop and ensure Docker Compose is available.
-2. From the repository root, install dependencies:
+Prerequisites: Node.js 20+, npm, and Docker Desktop with Docker Compose.
+
+1. Start PostgreSQL:
+   ```powershell
+   docker compose up -d postgres
+   ```
+2. Create `backend\.env` from `backend\.env.example` if it does not exist, then set the required local environment variables. Do not commit `.env` files.
+3. Install dependencies:
    ```powershell
    npm run install:all
    ```
-3. Run the database migration and seed data:
+4. Apply migrations and load demo data:
    ```powershell
    npm run migrate
    npm run seed
    ```
-4. Start the app locally:
+5. Start both applications:
    ```powershell
    npm run dev
    ```
-5. Open the frontend at `http://localhost:5173` and the API at `http://localhost:5000`.
+6. Open the frontend at `http://localhost:5173`. The API listens on `http://localhost:5000`.
+
+PostgreSQL is published on port 5433 to avoid conflicts with a local PostgreSQL service on port 5432. See [docs/deployment.md](docs/deployment.md) for environment variable names and more detail.
+
+## Demo credentials
+
+- Operator: `operator@demo.in` / `demo123`
+- Manager: `manager@demo.in` / `demo123`
+
+## Screenshots
+
+Manager payment-run screen, captured from the local seeded app:
+
+![Manager payment runs](docs/screenshots/manager-payment-runs.png)
+
+## Main workflows
+
+- Operators find a farmer, record a purchase, and preview the Marathi SMS slip.
+- Purchases can be queued offline and synced when connectivity returns.
+- Managers review flagged purchases and manage payment-run approval/export.
+- A payment run can be exported only once.
+
+## Validation
+
+Run backend tests and typechecks with:
 
 ```powershell
-docker compose up -d postgres
-Copy-Item backend\.env.example backend\.env
-# Fill backend\.env with local settings described in backend\README.md.
-npm run migrate --prefix backend
-npm run seed --prefix backend
-npm run install:all
-npm run dev
+cd backend
+npm test -- --run
+cd ..
+npm run typecheck
 ```
 
-Docker PostgreSQL is exposed on port 5433 to avoid colliding with an existing local PostgreSQL on 5432. Set `DATABASE_URL` to `postgresql://postgres:postgres@localhost:5433/farmers_payment_app?schema=public`.
-
-Open Prisma Studio in a separate terminal with `npm run studio --prefix backend`.
-The app starts the Express backend on port 5000 and the Vite frontend on port 5173.
-
-## Included modules
-
-- Member registry
-- Offline purchase capture with SMS slip generation
-- Price board management
-- Payment run export
-- OCR integration via OCR.space
-- HMAC-backed offline sync flow
+See [docs/TEST_REPORT.md](docs/TEST_REPORT.md) for the current audit, including known UI gaps.

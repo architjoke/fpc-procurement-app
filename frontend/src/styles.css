@@ -1540,6 +1540,14 @@ select {
   cursor: pointer;
 }
 
+.payment-run-link > span {
+  min-width: 0;
+}
+
+.payment-run-link > span:first-child strong {
+  overflow-wrap: anywhere;
+}
+
 .payment-run-link.selected {
   color: #17663a;
 }
@@ -1582,5 +1590,14 @@ select {
   .payment-line-list li {
     align-items: flex-start;
     flex-wrap: wrap;
+  }
+
+  .payment-run-link {
+    align-items: flex-start;
+  }
+
+  .payment-run-link > span:last-child {
+    max-width: 50%;
+    text-align: right;
   }
 }
