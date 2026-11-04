@@ -29,6 +29,7 @@ a {
 
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 1rem;
   align-items: center;
   justify-content: center;
@@ -1473,6 +1474,79 @@ select {
   gap: 1.25rem;
 }
 
+.dashboard-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.25rem 0;
+}
+
+.dashboard-stat .eyebrow {
+  margin: 0 0 0.5rem;
+}
+
+.dashboard-value {
+  display: block;
+  color: #1b5e20;
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-centres,
+.price-board-list {
+  margin-top: 1.25rem;
+}
+
+.centre-summary-list,
+.price-entry-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.centre-summary-list li,
+.price-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-width: 0;
+  padding: 0.9rem 0;
+  border-top: 1px solid #edf0f2;
+}
+
+.centre-summary-list li span,
+.price-entry small {
+  color: #6b7280;
+}
+
+.price-entry > div {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.price-entry > strong {
+  white-space: nowrap;
+}
+
+.price-edit-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.8rem;
+  width: 100%;
+}
+
+.price-entry-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
 .payment-purchase-list,
 .payment-run-list,
 .payment-line-list {
@@ -1583,7 +1657,8 @@ select {
 @media (max-width: 720px) {
   .ocr-capture-group.with-photo,
   .ocr-reading-inputs,
-  .payment-grid {
+  .payment-grid,
+  .dashboard-metrics {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1599,5 +1674,20 @@ select {
   .payment-run-link > span:last-child {
     max-width: 50%;
     text-align: right;
+  }
+
+  .centre-summary-list li,
+  .price-entry {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .price-entry > strong {
+    white-space: normal;
+  }
+
+  .price-entry-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 }

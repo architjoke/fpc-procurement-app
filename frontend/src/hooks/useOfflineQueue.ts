@@ -34,7 +34,7 @@ interface SyncResponse {
   results: Array<{
     uuid: string;
     status: 'SYNCED' | 'REJECTED';
-    purchase_status?: 'SYNCED' | 'FLAGGED';
+    purchase_status?: 'APPROVED' | 'FLAGGED';
     purchase_id?: string;
     reason?: string;
   }>;
@@ -231,7 +231,7 @@ export const useOfflineQueue = () => {
                 await offlineDb.syncHistory.put({
                   uuid: queuedEntry.uuid,
                   status: 'SYNCED',
-                  purchaseStatus: result.purchase_status ?? 'SYNCED',
+                  purchaseStatus: result.purchase_status ?? 'APPROVED',
                   ...(result.purchase_id ? { purchaseId: result.purchase_id } : {}),
                   snapshot: {
                     farmerId: queuedEntry.farmer_id,

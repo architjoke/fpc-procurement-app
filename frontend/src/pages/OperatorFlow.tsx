@@ -689,7 +689,7 @@ export const PurchaseWizardPage = () => {
               </p>
             ) : (
               <p className="success-message" role="status">
-                Purchase synced successfully.
+                Purchase approved and ready for payment.
               </p>
             )}
             <div className="saved-actions">

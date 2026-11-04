@@ -22,7 +22,7 @@ const LoginPage = () => {
     try {
       const { data } = await api.post<AuthSession>('/auth/login', { email, password });
       setSession(data);
-      navigate(data.user.role === 'centre_operator' ? '/operator/find' : '/manager/review', {
+      navigate(data.user.role === 'centre_operator' ? '/operator/find' : '/manager/dashboard', {
         replace: true,
       });
     } catch (loginError) {

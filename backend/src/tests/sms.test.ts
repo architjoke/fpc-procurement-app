@@ -6,7 +6,7 @@ const canonicalPurchases = [
   {
     purchaseId: 'purchase-sunil',
     slipNo: 'purchase-sunil',
-    status: 'SYNCED',
+    status: 'APPROVED',
     farmerName: 'Sunil Jadhav',
     cropName: 'Soybean',
     grossKg: 1250,
@@ -20,7 +20,7 @@ const canonicalPurchases = [
   {
     purchaseId: 'purchase-kamal',
     slipNo: 'purchase-kamal',
-    status: 'SYNCED',
+    status: 'APPROVED',
     farmerName: 'Kamal Shinde',
     cropName: 'Soybean',
     grossKg: 860,
@@ -34,7 +34,7 @@ const canonicalPurchases = [
   {
     purchaseId: 'purchase-mohan',
     slipNo: 'purchase-mohan',
-    status: 'SYNCED',
+    status: 'APPROVED',
     farmerName: 'Mohan Biradar',
     cropName: 'Tur',
     grossKg: 640,
@@ -65,7 +65,7 @@ describe('Marathi SMS slips', () => {
     expect(buildMarathiSmsSlip(purchase)).toBe(expected);
   });
 
-  it('stores a synced purchase slip exactly once and does not create slips for flagged purchases', async () => {
+  it('stores an approved purchase slip exactly once and does not create slips for flagged purchases', async () => {
     const stored = new Map<string, SmsOutboxEntry>();
     const upsertSmsOutbox = async (entry: SmsOutboxEntry) => {
       if (!stored.has(entry.purchaseId)) {

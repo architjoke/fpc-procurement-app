@@ -31,7 +31,7 @@ export const generateAndStoreSmsSlip = async (
   purchase: SmsSlipInput,
   store: SmsOutboxStore,
 ): Promise<string | null> => {
-  if (purchase.status !== 'SYNCED') {
+  if (purchase.status !== 'APPROVED' && purchase.status !== 'SYNCED') {
     return null;
   }
 

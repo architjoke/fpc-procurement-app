@@ -28,7 +28,7 @@ export interface QueuedPurchase {
 export interface SyncHistoryEntry {
   uuid: string;
   status: 'SYNCED';
-  purchaseStatus: 'SYNCED' | 'FLAGGED';
+  purchaseStatus: 'APPROVED' | 'FLAGGED';
   purchaseId?: string;
   snapshot?: {
     farmerId: string;

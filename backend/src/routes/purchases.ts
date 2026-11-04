@@ -265,7 +265,7 @@ router.post(
           ? anomalies.map((anomaly) => `${anomaly.trigger}: ${anomaly.reason}`).join(' ')
           : null;
       const purchaseId = uuidv4();
-      const purchaseStatus = anomalies.length > 0 ? 'FLAGGED' : 'SYNCED';
+      const purchaseStatus = anomalies.length > 0 ? 'FLAGGED' : 'APPROVED';
 
       const purchase = await prisma.$transaction(async (transaction) => {
         const createdPurchase = await transaction.purchase.create({
@@ -330,7 +330,7 @@ router.post(
             action: 'flagged_purchase',
             entityType: 'purchase',
             entityId: purchase.id,
-            before: JSON.stringify({ status: 'SYNCED' }),
+            before: null,
             after: JSON.stringify({ status: 'FLAGGED', reason: flagReason, reasons: anomalies }),
           },
         });
@@ -343,7 +343,7 @@ router.post(
         });
       }
 
-      return res.status(201).json({ data: purchase, message: 'Purchase synced.' });
+      return res.status(201).json({ data: purchase, message: 'Purchase approved.' });
     } catch (error) {
       if (error instanceof RangeError) {
         return res.status(400).json({ message: error.message });

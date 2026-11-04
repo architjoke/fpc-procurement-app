@@ -5,7 +5,7 @@ Live app URL: local only, not deployed; run locally via Docker Compose + Vite + 
 
 ## 1) Architecture
 
-The app is split into a plain Express + TypeScript backend and a Vite + React frontend with Dexie-backed offline queueing for operator devices. The backend persists to PostgreSQL via Prisma and exposes a JSON API consumed by the frontend. The project follows a single-centre operator model for procurement and a manager-only review/export flow for payment operations.
+The app is split into a plain Express + TypeScript backend and a Vite + React frontend with Dexie-backed offline queueing for operator devices. The backend persists to PostgreSQL via Prisma and exposes a JSON API consumed by the frontend. The project follows a single-centre operator model for procurement and a manager workflow for the dashboard, daily price board, flagged-purchase review, and payment-run export.
 
 ```text
 +---------------------+         +------------------------+
@@ -72,6 +72,7 @@ The app is split into a plain Express + TypeScript backend and a Vite + React fr
 - Amount is calculated in integer paise; no float storage.
 - Price board is per crop/grade/effectiveDate with one valid price per day.
 - Tare cannot exceed gross.
+- Purchases without anomaly flags are automatically marked `APPROVED` and become eligible for payment runs; flagged purchases are held for manager review.
 - Flagged purchases require manager review and audit logging.
 - Payment runs move through `DRAFT -> APPROVED -> EXPORTED`.
 - A payment run cannot be exported twice.
@@ -107,7 +108,7 @@ Operator -> Frontend Dexie: queue purchase payload
 Frontend -> Frontend: sign payload with HMAC device secret
 Frontend -> API: POST /api/v1/sync/purchases
 API -> API: verify HMAC + device session + nonce + timestamp ordering
-API -> DB: create purchase / mark FLAGGED if conflict found
+API -> DB: create purchase as APPROVED / mark FLAGGED if conflict found
 API -> SyncLog: ACCEPTED or REJECTED with reason
 API -> Frontend: accepted rejected results
 Frontend -> Dexie: remove accepted rows; keep retryable queue entries for rejected/transient failures
@@ -123,11 +124,12 @@ The exact template is:
 
 `रसीद {slip_no} | शेतकरी: {farmer_name} | {crop_name} | सकल वजन: {gross_kg} किलो | कच्चा वजन: {tare_kg} किलो | ओलावा: {moisture_pct}% | शुद्ध वजन: {net_kg} किलो | दर: ₹{rate}/क्विंटल | रक्कम: ₹{amount} | केंद्र: {centre_code}`
 
-The mock SMS gateway stores exactly one log row per synced purchase in `sms_outbox` using the unique `purchase_id` constraint. `GET /api/v1/sms/:purchaseId` returns the stored slip preview for the operator’s centre. Flagged purchases do not produce slips; approval does not retroactively send one.
+The mock SMS gateway stores exactly one log row per non-flagged purchase in `sms_outbox` using the unique `purchase_id` constraint. `GET /api/v1/sms/:purchaseId` returns the stored slip preview for the operator’s centre. Flagged purchases do not produce slips; approval does not retroactively send one.
 
 ## 8) Key assumptions and ambiguity notes
 
 - Kamal Shinde rounding ambiguity: the business rule states net weight is rounded to one decimal after moisture deduction; the project uses `Math.round(value * 10) / 10`, which is consistent with the canonical test case and accepted as the rule.
+- Purchase approval: non-flagged purchases are automatically approved; flagged purchases require a manager decision.
 - SMS timing for flagged purchases: flagged purchases do not generate slips, even after approval; TDD explicitly documents this and the app follows it.
 - Device secret handling: both server and client treat device keys as temporary secrets returned at login and store only the SHA-256 hash on the server.
 - No Aadhaar field exists anywhere in the schema or app contract; DPDP minimum-data principle is respected.
@@ -145,5 +147,5 @@ The MVP intentionally excludes deeper operational features not needed for the cl
 
 - full farmer/member onboarding workflow with consent capture audit history
 - end-to-end mobile app packaging with real OCR provider and push/pull sync service
-- audit dashboards and exception management beyond the current flag review screen
+- deeper audit dashboards and exception management beyond the current manager summary and flag review
 - production-grade bank integration and reconciliation exports

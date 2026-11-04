@@ -570,7 +570,7 @@ describe('API flows', () => {
     expect(responseStatus).toBe(429);
   });
 
-  it('syncs a signed offline purchase and persists it as SYNCED', async () => {
+  it('syncs a signed offline purchase as APPROVED for payment eligibility', async () => {
     const token = createOperatorToken();
     const item = createSyncItem();
     mockSyncDeviceSession();
@@ -604,7 +604,7 @@ describe('API flows', () => {
       expect.objectContaining({
         uuid: item.uuid,
         status: 'SYNCED',
-        purchase_status: 'SYNCED',
+        purchase_status: 'APPROVED',
         purchase_id: 'purchase-sync-1',
       }),
     ]);
@@ -615,7 +615,7 @@ describe('API flows', () => {
           rate: 4850,
           netKg: 490,
           amountPaise: 2376500,
-          status: 'SYNCED',
+          status: 'APPROVED',
         }),
       }),
     );
@@ -981,7 +981,7 @@ describe('API flows', () => {
       expect(response.status).toBe(201);
       expect(response.body.data.netKg).toBe(example.netKg);
       expect(response.body.data.amountPaise).toBe(example.amountPaise);
-      expect(response.body.data.status).toBe('SYNCED');
+      expect(response.body.data.status).toBe('APPROVED');
     }
 
     expect(mockedPrisma.purchase.create).toHaveBeenCalledTimes(3);

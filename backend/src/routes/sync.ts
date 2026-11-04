@@ -113,7 +113,7 @@ router.post(
       const results: Array<{
         uuid: string;
         status: 'SYNCED' | 'REJECTED';
-        purchase_status?: 'SYNCED' | 'FLAGGED';
+        purchase_status?: 'APPROVED' | 'FLAGGED';
         purchase_id?: string;
         reason?: string;
       }> = [];
@@ -367,7 +367,7 @@ router.post(
 
               const netKg = calculateNetWeightKg(item.gross_kg, item.tare_kg, item.moisture_pct);
               const amountPaise = calculateAmountPaisa(netKg, item.rate_per_quintal);
-              const purchaseStatus = conflicts.length > 0 ? 'FLAGGED' : 'SYNCED';
+              const purchaseStatus = conflicts.length > 0 ? 'FLAGGED' : 'APPROVED';
 
               await transaction.syncNonce.create({
                 data: {
@@ -436,7 +436,7 @@ router.post(
                     action: 'flagged_purchase',
                     entityType: 'purchase',
                     entityId: purchase.id,
-                    before: JSON.stringify({ status: 'SYNCED' }),
+                    before: null,
                     after: JSON.stringify({
                       status: 'FLAGGED',
                       reason: conflicts.join(' '),
@@ -461,7 +461,7 @@ router.post(
               return {
                 status: 'SYNCED' as const,
                 purchaseStatus:
-                  purchase.status === 'FLAGGED' ? ('FLAGGED' as const) : ('SYNCED' as const),
+                  purchase.status === 'FLAGGED' ? ('FLAGGED' as const) : ('APPROVED' as const),
                 purchaseId: purchase.id,
                 reason,
               };

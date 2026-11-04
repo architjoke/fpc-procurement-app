@@ -43,13 +43,16 @@ PostgreSQL is published on port 5433 to avoid conflicts with a local PostgreSQL 
 
 ## Screenshots
 
-Manager payment-run screen, captured from the local seeded app:
+Screens captured from the local app:
+
+![Manager price board](docs/screenshots/manager-price-board.png)
 
 ![Manager payment runs](docs/screenshots/manager-payment-runs.png)
 
 ## Main workflows
 
 - Operators find a farmer, record a purchase, and preview the Marathi SMS slip.
+- Non-flagged purchases are approved automatically; flagged purchases are held for manager review.
 - Purchases can be queued offline and synced when connectivity returns.
 - Managers review flagged purchases and manage payment-run approval/export.
 - A payment run can be exported only once.

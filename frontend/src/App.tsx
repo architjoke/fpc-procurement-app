@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, Navigate, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { api } from './lib/api';
@@ -90,6 +90,23 @@ interface PaymentRunDetail extends Omit<PaymentRunSummary, '_count'> {
       crop: { name: string };
     };
   }>;
+}
+
+interface PriceBoardEntry extends Price {
+  id: string;
+}
+
+interface DashboardSummary {
+  purchasesToday: number;
+  pendingPaymentAmountPaise: number;
+  centres: Array<{ id: string; name: string; purchaseCount: number }>;
+}
+
+interface PriceDraft {
+  cropId: string;
+  grade: string;
+  ratePerQuintal: string;
+  effectiveDate: string;
 }
 
 const formatPaise = (amountPaise: number) =>
@@ -243,6 +260,400 @@ const ManagerReview = () => {
               Next
             </button>
           </div>
+        )}
+      </section>
+    </main>
+  );
+};
+
+const ManagerDashboard = () => {
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const loadSummary = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data } = await api.get<{ data: DashboardSummary }>('/dashboard/summary');
+      setSummary(data.data);
+    } catch (loadError) {
+      console.error('Unable to load manager dashboard:', loadError);
+      setError('Could not load the dashboard. Please retry.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadSummary();
+  }, []);
+
+  return (
+    <main className="shell">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Operations overview</p>
+          <h1>Manager dashboard</h1>
+        </div>
+        <button className="button secondary" onClick={() => void loadSummary()} disabled={loading}>
+          Refresh
+        </button>
+      </div>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      {loading ? (
+        <p role="status">Loading dashboard…</p>
+      ) : !summary ? (
+        <p>The dashboard summary is unavailable.</p>
+      ) : (
+        <>
+          <section className="dashboard-metrics" aria-label="Procurement summary">
+            <article className="card dashboard-stat">
+              <p className="eyebrow">Purchases today</p>
+              <strong className="dashboard-value">
+                {summary.purchasesToday.toLocaleString('en-IN')}
+              </strong>
+            </article>
+            <article className="card dashboard-stat">
+              <p className="eyebrow">Pending payment</p>
+              <strong className="dashboard-value">
+                {formatPaise(summary.pendingPaymentAmountPaise)}
+              </strong>
+            </article>
+          </section>
+          <section className="card dashboard-centres">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Centre activity</p>
+                <h2>Procurement by centre</h2>
+              </div>
+            </div>
+            {summary.centres.length === 0 ? (
+              <p>No centres are configured yet.</p>
+            ) : (
+              <ul className="centre-summary-list">
+                {summary.centres.map((centre) => (
+                  <li key={centre.id}>
+                    <strong>{centre.name}</strong>
+                    <span>{centre.purchaseCount.toLocaleString('en-IN')} purchases</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </>
+      )}
+    </main>
+  );
+};
+
+const ManagerPriceBoard = () => {
+  const [entries, setEntries] = useState<PriceBoardEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [editingId, setEditingId] = useState('');
+  const [draft, setDraft] = useState<PriceDraft>({
+    cropId: '',
+    grade: '',
+    ratePerQuintal: '',
+    effectiveDate: new Date().toISOString().slice(0, 10),
+  });
+  const [editDraft, setEditDraft] = useState<PriceDraft | null>(null);
+
+  const loadEntries = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data } = await api.get<{ data: PriceBoardEntry[] }>('/price-board');
+      setEntries(data.data);
+      setDraft((current) => ({
+        ...current,
+        cropId: current.cropId || data.data[0]?.cropId || '',
+      }));
+    } catch (loadError) {
+      console.error('Unable to load manager price board:', loadError);
+      setError('Could not load the price board. Please retry.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadEntries();
+  }, []);
+
+  const crops = Array.from(new Map(entries.map((entry) => [entry.cropId, entry.crop])).values());
+
+  const getRequestError = (requestError: unknown, fallback: string) =>
+    axios.isAxiosError(requestError) && typeof requestError.response?.data?.message === 'string'
+      ? requestError.response.data.message
+      : fallback;
+
+  const createEntry = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      await api.post('/price-board', {
+        cropId: draft.cropId,
+        grade: draft.grade,
+        ratePerQuintal: Number(draft.ratePerQuintal),
+        effectiveDate: draft.effectiveDate,
+      });
+      setDraft((current) => ({ ...current, grade: '', ratePerQuintal: '' }));
+      setNotice('Price added to the board.');
+      await loadEntries();
+    } catch (requestError) {
+      console.error('Unable to create price board entry:', requestError);
+      setError(getRequestError(requestError, 'Could not add this price. Please retry.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startEditing = (entry: PriceBoardEntry) => {
+    setEditingId(entry.id);
+    setEditDraft({
+      cropId: entry.cropId,
+      grade: entry.grade,
+      ratePerQuintal: String(entry.ratePerQuintal),
+      effectiveDate: new Date(entry.effectiveDate).toISOString().slice(0, 10),
+    });
+    setError('');
+    setNotice('');
+  };
+
+  const saveEdit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingId || !editDraft) return;
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      await api.put(`/price-board/${editingId}`, {
+        cropId: editDraft.cropId,
+        grade: editDraft.grade,
+        ratePerQuintal: Number(editDraft.ratePerQuintal),
+        effectiveDate: editDraft.effectiveDate,
+      });
+      setEditingId('');
+      setEditDraft(null);
+      setNotice('Price updated.');
+      await loadEntries();
+    } catch (requestError) {
+      console.error('Unable to update price board entry:', requestError);
+      setError(getRequestError(requestError, 'Could not update this price. Please retry.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <main className="shell">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Manager controls</p>
+          <h1>Daily price board</h1>
+          <p>
+            Set a crop and grade rate for an effective date. A date can have only one rate per crop
+            and grade.
+          </p>
+        </div>
+        <button className="button secondary" onClick={() => void loadEntries()} disabled={loading}>
+          Refresh
+        </button>
+      </div>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      {notice && (
+        <p className="success" role="status">
+          {notice}
+        </p>
+      )}
+      <section className="card price-board-form">
+        <h2>Add a price</h2>
+        {loading ? (
+          <p role="status">Loading crops and current prices…</p>
+        ) : crops.length === 0 ? (
+          <p>No crops are available from the current price board.</p>
+        ) : (
+          <form className="form-grid" onSubmit={(event) => void createEntry(event)}>
+            <label>
+              Crop
+              <select
+                value={draft.cropId}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, cropId: event.target.value }))
+                }
+                required
+              >
+                {crops.map((crop) => (
+                  <option key={crop.id} value={crop.id}>
+                    {crop.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Grade
+              <input
+                value={draft.grade}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, grade: event.target.value }))
+                }
+                maxLength={20}
+                required
+              />
+            </label>
+            <label>
+              Rate per quintal (₹)
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={draft.ratePerQuintal}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, ratePerQuintal: event.target.value }))
+                }
+                required
+              />
+            </label>
+            <label>
+              Effective date
+              <input
+                type="date"
+                value={draft.effectiveDate}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, effectiveDate: event.target.value }))
+                }
+                required
+              />
+            </label>
+            <button type="submit" className="button primary full-span" disabled={saving}>
+              {saving ? 'Saving…' : 'Add price'}
+            </button>
+          </form>
+        )}
+      </section>
+      <section className="card price-board-list">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Current and scheduled rates</p>
+            <h2>Price entries</h2>
+          </div>
+        </div>
+        {loading ? (
+          <p role="status">Loading price entries…</p>
+        ) : entries.length === 0 ? (
+          <p>No prices are configured yet.</p>
+        ) : (
+          <ul className="price-entry-list">
+            {entries.map((entry) => (
+              <li key={entry.id} className="price-entry">
+                {editingId === entry.id && editDraft ? (
+                  <form className="price-edit-form" onSubmit={(event) => void saveEdit(event)}>
+                    <label>
+                      Crop
+                      <select
+                        value={editDraft.cropId}
+                        onChange={(event) =>
+                          setEditDraft((current) =>
+                            current ? { ...current, cropId: event.target.value } : current,
+                          )
+                        }
+                      >
+                        {crops.map((crop) => (
+                          <option key={crop.id} value={crop.id}>
+                            {crop.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Grade
+                      <input
+                        value={editDraft.grade}
+                        onChange={(event) =>
+                          setEditDraft((current) =>
+                            current ? { ...current, grade: event.target.value } : current,
+                          )
+                        }
+                        maxLength={20}
+                        required
+                      />
+                    </label>
+                    <label>
+                      Rate per quintal (₹)
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={editDraft.ratePerQuintal}
+                        onChange={(event) =>
+                          setEditDraft((current) =>
+                            current ? { ...current, ratePerQuintal: event.target.value } : current,
+                          )
+                        }
+                        required
+                      />
+                    </label>
+                    <label>
+                      Effective date
+                      <input
+                        type="date"
+                        value={editDraft.effectiveDate}
+                        onChange={(event) =>
+                          setEditDraft((current) =>
+                            current ? { ...current, effectiveDate: event.target.value } : current,
+                          )
+                        }
+                        required
+                      />
+                    </label>
+                    <div className="actions price-entry-actions">
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => setEditingId('')}
+                      >
+                        Cancel
+                      </button>
+                      <button type="submit" className="button primary" disabled={saving}>
+                        {saving ? 'Saving…' : 'Save changes'}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <>
+                    <div>
+                      <strong>
+                        {entry.crop.name} · Grade {entry.grade}
+                      </strong>
+                      <small>Effective {new Date(entry.effectiveDate).toLocaleDateString()}</small>
+                    </div>
+                    <strong>{formatPaise(entry.ratePerQuintal * 100)} / quintal</strong>
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() => startEditing(entry)}
+                    >
+                      Edit
+                    </button>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
       </section>
     </main>
@@ -1256,7 +1667,7 @@ export default function App() {
   const operatorHome = session
     ? session.user.role === 'centre_operator'
       ? '/operator/find'
-      : '/manager/review'
+      : '/manager/dashboard'
     : '/login';
 
   return (
@@ -1267,7 +1678,9 @@ export default function App() {
         {session?.user.role === 'centre_operator' && <Link to="/operator/find">Find farmer</Link>}
         {session?.user.role === 'office_manager' && (
           <>
+            <Link to="/manager/dashboard">Dashboard</Link>
             <Link to="/manager/review">Flagged review</Link>
+            <Link to="/manager/prices">Price board</Link>
             <Link to="/manager/payments">Payment runs</Link>
           </>
         )}
@@ -1287,7 +1700,10 @@ export default function App() {
           <Route path="purchase/:id" element={<PurchaseDetailPage />} />
         </Route>
         <Route path="/manager" element={<ManagerRoleGuard />}>
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<ManagerDashboard />} />
           <Route path="review" element={<ManagerReview />} />
+          <Route path="prices" element={<ManagerPriceBoard />} />
           <Route path="payments" element={<PaymentManagement />} />
         </Route>
         <Route path="/purchases" element={<Navigate to={operatorHome} replace />} />

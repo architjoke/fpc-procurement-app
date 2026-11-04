@@ -298,7 +298,7 @@ async function main() {
         netKg: adjustedNet,
         rate: purchase.rate,
         amountPaise,
-        status: 'SYNCED',
+        status: 'APPROVED',
         photoUrl: '/ocr-sample-scale-1.jpg',
       },
       include: { farmer: true, crop: true, centre: true },
@@ -313,7 +313,7 @@ async function main() {
         entityType: 'purchase',
         entityId: created.id,
         before: null,
-        after: JSON.stringify({ amountPaise, status: 'SYNCED' }),
+        after: JSON.stringify({ amountPaise, status: 'APPROVED' }),
       },
     });
   }
