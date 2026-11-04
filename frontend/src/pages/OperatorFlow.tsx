@@ -44,7 +44,13 @@ interface PurchaseSnapshot {
   ratePerQuintal: number;
 }
 
-interface PurchaseRecord extends Omit<PurchaseSnapshot, 'ratePerQuintal'> {
+interface PurchaseRecord extends Omit<
+  PurchaseSnapshot,
+  'grossKg' | 'tareKg' | 'moisturePct' | 'ratePerQuintal'
+> {
+  grossKg: number | string;
+  tareKg: number | string;
+  moisturePct: number | string;
   id: string;
   uuid: string;
   status: string;
@@ -1276,7 +1282,7 @@ export const PurchaseDetailPage = () => {
   const flagReason = purchase?.flagReason ?? localInfo?.reason ?? locationState?.flagReason;
   const netKg = purchase
     ? Number(purchase.netKg)
-    : toNetWeight(snapshot.grossKg, snapshot.tareKg, snapshot.moisturePct);
+    : toNetWeight(Number(snapshot.grossKg), Number(snapshot.tareKg), Number(snapshot.moisturePct));
   const amountPaise = purchase?.amountPaise ?? toAmountPaise(netKg, ratePerQuintal);
   const cropName = purchase?.crop.name ?? localInfo?.cropName ?? 'Crop';
   const farmerName = purchase?.farmer.name ?? localInfo?.farmerName ?? 'Selected farmer';
@@ -1322,15 +1328,15 @@ export const PurchaseDetailPage = () => {
           <dl className="slip-values">
             <div>
               <dt>Gross weight</dt>
-              <dd className="numeric">{snapshot.grossKg.toFixed(1)} kg</dd>
+              <dd className="numeric">{Number(snapshot.grossKg).toFixed(1)} kg</dd>
             </div>
             <div>
               <dt>Tare weight</dt>
-              <dd className="numeric">{snapshot.tareKg.toFixed(1)} kg</dd>
+              <dd className="numeric">{Number(snapshot.tareKg).toFixed(1)} kg</dd>
             </div>
             <div>
               <dt>Moisture</dt>
-              <dd className="numeric">{snapshot.moisturePct.toFixed(1)}%</dd>
+              <dd className="numeric">{Number(snapshot.moisturePct).toFixed(1)}%</dd>
             </div>
             <div>
               <dt>Net weight</dt>

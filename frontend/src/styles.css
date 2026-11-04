@@ -1662,6 +1662,24 @@ select {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .review-item {
+    flex-wrap: wrap;
+  }
+
+  .review-thumbnail {
+    max-width: 100%;
+  }
+
+  .review-details {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .review-details input {
+    width: 100%;
+    min-width: 0;
+  }
+
   .payment-line-list li {
     align-items: flex-start;
     flex-wrap: wrap;
