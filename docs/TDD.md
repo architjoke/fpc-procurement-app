@@ -1,10 +1,29 @@
-# TDD and architecture notes
+# Farmers Payment App
 
-## Architecture
+Repository URL: TBD — set to the GitHub repo before public submission.
+Live app URL: local only, not deployed; run locally via Docker Compose + Vite + Express.
 
-The project is split into a plain Express + TypeScript backend and a Vite + React frontend. They communicate over a typed API client.
+## 1) Architecture
 
-## Data model
+The app is split into a plain Express + TypeScript backend and a Vite + React frontend with Dexie-backed offline queueing for operator devices. The backend persists to PostgreSQL via Prisma and exposes a JSON API consumed by the frontend. The project follows a single-centre operator model for procurement and a manager-only review/export flow for payment operations.
+
+```text
++---------------------+         +------------------------+
+| Browser / Operator  | <----> | React + Vite frontend  |
+| 360px mobile flow   |         | TypeScript / Dexie     |
++----------+----------+         +-----------+------------+
+           |                                  |
+           | HTTPS / JSON API                | IndexedDB queue
+           v                                  v
++---------------------+         +------------------------+
+| Express API         | <----> | PostgreSQL (Prisma)    |
+| JWT auth + routes   |         | centres / farmers /    |
+| OCR / sync / runs   |         | purchases / payment     |
++---------------------+         | runs / audit trail     |
+                                +------------------------+
+```
+
+## 2) Data model summary
 
 - centres
 - farmers
@@ -20,121 +39,111 @@ The project is split into a plain Express + TypeScript backend and a Vite + Reac
 - sms_outbox
 - ocr_jobs
 
-## API contract
+## 3) API contract
 
-- POST /api/v1/auth/login
-- POST /api/v1/auth/refresh
-- GET /api/v1/farmers
-- POST /api/v1/farmers
-- GET /api/v1/price-board
-- POST /api/v1/price-board
-- PUT /api/v1/price-board/:id
-- POST /api/v1/purchases
-- PATCH /api/v1/purchases/:id/review
-- POST /api/v1/ocr/parse
-- POST /api/v1/sync/purchases
-- POST /api/v1/payment-runs
-- GET /api/v1/payment-runs
-- GET /api/v1/payment-runs/:id
-- PATCH /api/v1/payment-runs/:id/approve
-- GET /api/v1/payment-runs/:id/export
-- GET /api/v1/sms/:purchaseId
-- GET /api/v1/dashboard/summary
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
+- `POST /api/v1/auth/logout`
+- `GET /api/v1/farmers`
+- `POST /api/v1/farmers`
+- `GET /api/v1/farmers/:id`
+- `PUT /api/v1/farmers/:id`
+- `GET /api/v1/price-board`
+- `POST /api/v1/price-board`
+- `PUT /api/v1/price-board/:id`
+- `GET /api/v1/purchases`
+- `POST /api/v1/purchases`
+- `PATCH /api/v1/purchases/:id/review`
+- `POST /api/v1/ocr/parse`
+- `POST /api/v1/sync/purchases`
+- `POST /api/v1/payment-runs`
+- `GET /api/v1/payment-runs`
+- `GET /api/v1/payment-runs/:id`
+- `PATCH /api/v1/payment-runs/:id/approve`
+- `GET /api/v1/payment-runs/:id/export`
+- `GET /api/v1/sms/:purchaseId`
+- `GET /api/v1/dashboard/summary`
 
-## Business rules
+## 4) Business rules contract
 
-- Net weight = gross - tare.
+- Net weight = `gross - tare`.
 - Moisture deduction applies to full percentage points above 12%.
-- Amount is calculated using integer paise with no floating-point drift.
-- A crop and grade can have only one price per effective calendar date.
-- Online purchase rates are selected from the current daily price board; client-supplied rates are rejected.
-- Tare weight cannot exceed gross weight; calculated net weight is rounded to one decimal before pricing.
-- Entry review and audit logging are enforced for flagged purchases.
+- Net weight is rounded to one decimal place before pricing.
+- Amount is calculated in integer paise; no float storage.
+- Price board is per crop/grade/effectiveDate with one valid price per day.
+- Tare cannot exceed gross.
+- Flagged purchases require manager review and audit logging.
+- Payment runs move through `DRAFT -> APPROVED -> EXPORTED`.
+- A payment run cannot be exported twice.
 
 ### Anomaly review rules
 
-| Trigger             | Rule                                                                                                        | Handling                                                                   |
-| ------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `YIELD_CAP`         | Net weight exceeds 1,500 kg per soybean acre or 1,000 kg per tur acre. Equality at the cap is allowed.      | Persist as `FLAGGED`; include measured and configured limit in the reason. |
-| `REPEATED_FARMER`   | Same farmer has any purchase in the preceding 60 minutes, whether created online or synced.                 | Persist as `FLAGGED`; do not cancel or overwrite either purchase.          |
-| `MOISTURE_VARIANCE` | Including the current reading, at least five same-centre/day readings span less than 0.5 percentage points. | Persist as `FLAGGED`; exact 0.5-point variance does not trigger.           |
+| Trigger             | Rule                                                                                                   | Handling                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `YIELD_CAP`         | Net weight exceeds 1,500 kg/acre for soybean or 1,000 kg/acre for tur; equality at the cap is allowed. | Persist as `FLAGGED` and include the limit in the reason. |
+| `REPEATED_FARMER`   | Same farmer has a purchase in the previous 60 minutes.                                                 | Persist as `FLAGGED`; do not cancel or overwrite.         |
+| `MOISTURE_VARIANCE` | At least five same-centre/day readings vary by less than 0.5 percentage points.                        | Persist as `FLAGGED`; exact 0.5 does not trigger.         |
 
-Moisture comparisons use UTC calendar days and match purchase device timestamps when present;
-older purchases without a device timestamp use their recorded creation date.
-Managers review flagged purchases with a required reason. Approval changes `FLAGGED` to
-`APPROVED`; rejection changes it to `REJECTED`. Both decisions are written to `audit_trail`.
-Flagged purchases are excluded from payment runs and do not generate SMS slips.
-SMS slips are generated only when a purchase is created or synced with `SYNCED` status.
-Flagged purchases do not receive a slip, including if a manager later approves them; approval
-does not retroactively trigger SMS generation.
+Moisture comparisons use UTC calendar days and use the purchase device timestamp when present; older purchases without a device timestamp fall back to creation time. Managers must provide a reason when approving or rejecting a flagged purchase. Approval changes `FLAGGED` to `APPROVED`; rejection changes it to `REJECTED`.
 
-### Payment runs
+## 5) OCR flow
 
-Payment runs move through `DRAFT` -> `APPROVED` -> `EXPORTED`. Only approved purchases that
-are not already assigned to a run are eligible. Approval is audited; export marks the run
-`EXPORTED` and its purchases `PAID`. The downloadable CSV contains sequence number, beneficiary
-name, account number, IFSC, integer amount in paise, payment reference, and purpose code.
+```text
+Operator uploads image -> multer validation -> provider factory -> raw text parse -> parseOcrText()
+        -> p95/low-confidence check -> OcrJob row persisted -> purchase creation validates OCR mismatch
+```
 
-### Marathi SMS slips
+Notes:
 
-The mock SMS gateway records one `SENT` row in `sms_outbox` per synced purchase. The unique
-`purchase_id` constraint and an upsert with an empty update make generation idempotent; a retry
-cannot duplicate or rewrite a previously generated slip. `GET /api/v1/sms/:purchaseId` returns
-the stored slip for preview and is restricted to the purchase's centre for operators.
+- Uploads accept JPEG, PNG, GIF, and WebP with max size 1 MiB.
+- `OCR_PROVIDER=mock` switches to the in-memory mock provider; production uses OCR.space.
+- Parsed values are stored in `ocr_jobs`, including raw text, confidence, and `purchase_id` once linked.
+- If the operator enters values that differ from OCR without explicit reconciliation, creation fails with `OCR_MISMATCH`.
+
+## 6) Offline sync sequence diagram
+
+```text
+Operator -> Frontend Dexie: queue purchase payload
+Frontend -> Frontend: sign payload with HMAC device secret
+Frontend -> API: POST /api/v1/sync/purchases
+API -> API: verify HMAC + device session + nonce + timestamp ordering
+API -> DB: create purchase / mark FLAGGED if conflict found
+API -> SyncLog: ACCEPTED or REJECTED with reason
+API -> Frontend: accepted rejected results
+Frontend -> Dexie: remove accepted rows; keep retryable queue entries for rejected/transient failures
+```
+
+### Retry policy choice
+
+The project adopts a retryable queue policy: failed sync entries stay `QUEUED` with `lastError` preserved unless the failure is a permanent validation issue that the backend can never recover from. This preserves the TDD contract and prevents silent data loss while waiting for connectivity or a later resubmission.
+
+## 7) Marathi SMS slip contract
 
 The exact template is:
 
 `रसीद {slip_no} | शेतकरी: {farmer_name} | {crop_name} | सकल वजन: {gross_kg} किलो | कच्चा वजन: {tare_kg} किलो | ओलावा: {moisture_pct}% | शुद्ध वजन: {net_kg} किलो | दर: ₹{rate}/क्विंटल | रक्कम: ₹{amount} | केंद्र: {centre_code}`
 
-Weights and moisture are rendered to one decimal place, the rupee amount to two decimals, and
-the stable purchase UUID is used as the slip number.
+The mock SMS gateway stores exactly one log row per synced purchase in `sms_outbox` using the unique `purchase_id` constraint. `GET /api/v1/sms/:purchaseId` returns the stored slip preview for the operator’s centre. Flagged purchases do not produce slips; approval does not retroactively send one.
 
-## OCR flow
+## 8) Key assumptions and ambiguity notes
 
-1. An authenticated centre operator uploads a JPEG, PNG, GIF, or WebP photo (maximum 1 MiB).
-2. The OCR provider factory selects OCR.space using `OCR_SPACE_API_KEY`, or a mock provider when
-   `OCR_PROVIDER=mock`; routes depend only on the `OcrProvider` interface.
-3. OCR numeric values are parsed from raw text, including `kg`/`%` suffixes, decimal commas, and
-   common OCR character substitutions. Unreadable/low-confidence scans return `OCR_UNREADABLE` or
-   `OCR_UNAVAILABLE` with HTTP 422 so manual entry remains available.
-4. Every valid upload result is persisted as an operator-owned `ocr_jobs` row. `image_url` stores a
-   SHA-256 reference to the uploaded bytes; raw bytes are not retained by the application.
-5. Purchase creation loads the job for the current operator and stores its confidence and image
-   reference. Changed prefilled values require an explicit reconciliation flag; otherwise the
-   purchase service returns `OCR_MISMATCH`.
-6. OCR metadata is carried and HMAC-signed when a purchase must enter the offline sync queue.
+- Kamal Shinde rounding ambiguity: the business rule states net weight is rounded to one decimal after moisture deduction; the project uses `Math.round(value * 10) / 10`, which is consistent with the canonical test case and accepted as the rule.
+- SMS timing for flagged purchases: flagged purchases do not generate slips, even after approval; TDD explicitly documents this and the app follows it.
+- Device secret handling: both server and client treat device keys as temporary secrets returned at login and store only the SHA-256 hash on the server.
+- No Aadhaar field exists anywhere in the schema or app contract; DPDP minimum-data principle is respected.
 
-## Offline sync flow
+## 9) What we cut
 
-1. Mobile client stores queued records in IndexedDB.
-2. On reconnect, client signs queued payloads with an HMAC device key.
-3. Backend verifies signature, rejects replays, and logs every result.
-4. Any conflict is escalated to a flagged purchase for manager review.
+The MVP intentionally excludes deeper operational features not needed for the client brief, including:
 
-### Offline purchase signature format
+- truck dispatch or logistics management
+- multi-warehouse stock dashboards
+- advanced analytics beyond the daily summary dashboard
+- deep procurement forecasting or external bank integration beyond a mock CSV export
 
-The client sends each batch item with `hmac_signature` excluded from the signed content. The
-remaining fields are serialized in this exact key order:
+## 10) What we'd build next
 
-`centre_id`, `crop_id`, `device_timestamp`, `farmer_id`, `grade`, `gross_kg`, `moisture_pct`,
-`nonce`, `rate_per_quintal`, `tare_kg`, `uuid`.
-
-Each component is `key=encodeURIComponent(value)`; components are joined by `|`. Timestamps are
-normalized to UTC ISO-8601 with milliseconds, and numbers use JavaScript's canonical `String(number)`
-representation. HMAC-SHA256 uses the device secret returned at operator login and emits lowercase
-hex. When OCR is attached, defined optional fields (`ocr_job_id`, `ocr_moisture`,
-`ocr_moisture_reconciled`, `ocr_weight`, `ocr_weight_reconciled`) are appended after the base fields
-in that lexicographic order; undefined optional fields are omitted. The batch sends the device ID
-and device secret in `x-device-id` and `x-device-secret` headers. The server stores only a SHA-256
-hash of each device secret and expires consumed nonces after 24 hours.
-
-## Assumptions and future work
-
-- Operator device secrets are issued at login and stored server-side only as SHA-256 hashes.
-- Payment export uses a mock bank CSV format.
-- OCR.sample images are present under frontend/public for local verification.
-- The project focuses on the core workflow rather than deeper dispatch or stock analytics.
-
-## DPDP 2023 note
-
-Consent is captured at farmer registration, the use is limited to procurement and payment, and only the minimum necessary fields are stored.
+- full farmer/member onboarding workflow with consent capture audit history
+- end-to-end mobile app packaging with real OCR provider and push/pull sync service
+- audit dashboards and exception management beyond the current flag review screen
+- production-grade bank integration and reconciliation exports

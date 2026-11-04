@@ -2,6 +2,14 @@
 
 Offline-first procurement and payment MVP for a farmer producer company in Maharashtra.
 
+## Tech stack
+
+- Backend: Express + TypeScript + Prisma + PostgreSQL
+- Frontend: React + Vite + TypeScript
+- Offline sync: Dexie + IndexedDB + HMAC-SHA256 device signatures
+- AI/OCR: OCR.space provider (with mock fallback for CI and local regression tests)
+- Auth: JWT access + refresh tokens
+
 ## Prerequisites
 
 - Node.js 20+
@@ -10,7 +18,21 @@ Offline-first procurement and payment MVP for a farmer producer company in Mahar
 
 ## Quick start
 
-Start Docker Desktop, then from PowerShell in the repository root:
+1. Start Docker Desktop and ensure Docker Compose is available.
+2. From the repository root, install dependencies:
+   ```powershell
+   npm run install:all
+   ```
+3. Run the database migration and seed data:
+   ```powershell
+   npm run migrate
+   npm run seed
+   ```
+4. Start the app locally:
+   ```powershell
+   npm run dev
+   ```
+5. Open the frontend at `http://localhost:5173` and the API at `http://localhost:5000`.
 
 ```powershell
 docker compose up -d postgres

@@ -2,32 +2,55 @@
 
 ## Local run steps
 
-1. Start PostgreSQL via Docker Compose.
-2. Copy backend `.env.example` to `.env` and fill in the variable names required by the app.
-3. Copy frontend `.env.example` to `.env` and set `VITE_API_URL`.
-4. Run:
+1. Start PostgreSQL and any supporting services with Docker Compose.
+2. Install all project dependencies:
+   ```bash
+   npm run install:all
+   ```
+3. Run the Prisma migration:
+   ```bash
+   npm run migrate --prefix backend
+   ```
+4. Seed the demo dataset:
+   ```bash
+   npm run seed --prefix backend
+   ```
+5. Start the app in development mode:
+   ```bash
+   npm run dev
+   ```
+6. Open the frontend at `http://localhost:5173` and the backend at `http://localhost:5000`.
 
-```bash
-npm run install:all
-npm run dev
-```
+## Environment variables
+
+Backend environment variables (names only; values are project-specific and must be set in `.env`):
+
+- DATABASE_URL
+- JWT_SECRET
+- JWT_REFRESH_SECRET
+- PORT
+- CORS_ORIGIN
+- OCR_SPACE_API_KEY
+- OCR_PROVIDER
+- OCR_MOCK_TEXT
+- OCR_MOCK_CONFIDENCE
+- OCR_MOCK_FAIL
+
+Frontend environment variables (names only; values are project-specific and must be set in `.env`):
+
+- VITE_API_URL
 
 ## Demo credentials
 
 - Operator: `operator@demo.in` / `demo123`
 - Manager: `manager@demo.in` / `demo123`
 
-## Environment variables
+## Smoke-test sequence
 
-Backend:
-
-- DATABASE_URL
-- JWT_SECRET
-- JWT_REFRESH_SECRET
-- PORT
-- OCR_SPACE_API_KEY
-- CORS_ORIGIN
-
-Frontend:
-
-- VITE_API_URL
+1. Login as the operator.
+2. Create a purchase with a valid farmer and crop.
+3. Confirm the offline queue and sync status update.
+4. Login as the manager.
+5. Review any flagged purchase.
+6. Create and approve a payment run.
+7. Export the CSV and confirm the run cannot be exported a second time.
