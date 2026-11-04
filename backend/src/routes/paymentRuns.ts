@@ -213,6 +213,9 @@ router.get(
       if (run.status === 'DRAFT') {
         return res.status(409).json({ message: 'Approve the payment run before exporting it.' });
       }
+      if (run.status === 'EXPORTED') {
+        return res.status(409).json({ message: 'Payment run already exported.' });
+      }
 
       const csv = generatePaymentRunCsv(
         run.paymentItems.map((item) => ({

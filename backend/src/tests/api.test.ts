@@ -1647,6 +1647,41 @@ describe('API flows', () => {
     expect(mockedPrisma.paymentRun.updateMany).not.toHaveBeenCalled();
   });
 
+  it('blocks re-export of an already exported payment run', async () => {
+    const managerToken = jwt.sign(
+      { sub: 'mgr-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '1h' },
+    );
+    mockedPrisma.paymentRun.findUnique.mockResolvedValue({
+      id: 'run-1',
+      status: 'EXPORTED',
+      paymentItems: [
+        {
+          purchaseId: 'purchase-1',
+          purchase: {
+            id: 'purchase-1',
+            amountPaise: 5975200,
+            farmer: {
+              name: 'Sunil Jadhav',
+              bankAccount: '123456789012',
+              bankIfsc: 'SBIN0001234',
+            },
+          },
+        },
+      ],
+    });
+
+    const response = await request(app)
+      .get('/api/v1/payment-runs/run-1/export')
+      .set(authHeaders(managerToken));
+
+    expect(response.status).toBe(409);
+    expect(response.body.message).toBe('Payment run already exported.');
+    expect(mockedPrisma.purchase.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.paymentRun.updateMany).not.toHaveBeenCalled();
+  });
+
   it('creates, approves, and exports a run end to end', async () => {
     const managerToken = jwt.sign(
       { sub: 'mgr-1', email: 'manager@demo.in', role: 'office_manager', type: 'access' },
