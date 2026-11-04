@@ -2,28 +2,35 @@
 
 ## Local run steps
 
-1. Start PostgreSQL and any supporting services with Docker Compose.
-2. Install all project dependencies:
-   ```bash
+Run these commands from the repository root in PowerShell. Install Docker Desktop and Node.js 20+ first.
+
+1. Start PostgreSQL with Docker Compose:
+   ```powershell
+   docker compose up -d postgres
+   ```
+   PostgreSQL is exposed on port `5433` to avoid conflicts with a local PostgreSQL service on port `5432`.
+2. Create `backend\.env` from `backend\.env.example` and set the required local values. Create `frontend\.env` from `frontend\.env.example` if you need to override the frontend API URL. Never submit the `.env` files.
+3. Install all project dependencies:
+   ```powershell
    npm run install:all
    ```
-3. Run the Prisma migration:
-   ```bash
-   npm run migrate --prefix backend
+4. Apply the database migrations:
+   ```powershell
+   npm run migrate
    ```
-4. Seed the demo dataset:
-   ```bash
-   npm run seed --prefix backend
+5. Seed the demo dataset:
+   ```powershell
+   npm run seed
    ```
-5. Start the app in development mode:
-   ```bash
+6. Start the backend and frontend:
+   ```powershell
    npm run dev
    ```
-6. Open the frontend at `http://localhost:5173` and the backend at `http://localhost:5000`.
+7. Open the frontend at `http://localhost:5173`. The API listens at `http://localhost:5000`.
 
 ## Environment variables
 
-Backend environment variables (names only; values are project-specific and must be set in `.env`):
+Backend environment variable names (set values in `backend\.env`; do not commit or submit that file):
 
 - DATABASE_URL
 - JWT_SECRET
@@ -36,7 +43,7 @@ Backend environment variables (names only; values are project-specific and must 
 - OCR_MOCK_CONFIDENCE
 - OCR_MOCK_FAIL
 
-Frontend environment variables (names only; values are project-specific and must be set in `.env`):
+Frontend environment variable names (set values in `frontend\.env` if overriding the default):
 
 - VITE_API_URL
 
