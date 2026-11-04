@@ -4,12 +4,12 @@
 
 Run these commands from the repository root in PowerShell. Install Docker Desktop and Node.js 20+ first.
 
-1. Start PostgreSQL with Docker Compose:
+1. Create a root `.env` file for Docker Compose with values you choose for `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`. Create `backend\.env` from `backend\.env.example` and set `DATABASE_URL` to connect to that database on port `5433`, plus the backend settings listed below. Create `frontend\.env` from `frontend\.env.example` only if you need to override the frontend API URL. Keep all `.env` files local; do not commit or submit them.
+2. Start PostgreSQL with Docker Compose:
    ```powershell
    docker compose up -d postgres
    ```
    PostgreSQL is exposed on port `5433` to avoid conflicts with a local PostgreSQL service on port `5432`.
-2. Create `backend\.env` from `backend\.env.example` and set the required local values. Create `frontend\.env` from `frontend\.env.example` if you need to override the frontend API URL. Never submit the `.env` files.
 3. Install all project dependencies:
    ```powershell
    npm run install:all
@@ -28,7 +28,17 @@ Run these commands from the repository root in PowerShell. Install Docker Deskto
    ```
 7. Open the frontend at `http://localhost:5173`. The API listens at `http://localhost:5000`.
 
+## Deployment status
+
+The application is not deployed to a public hosting provider. The supported setup in this repository is local development: PostgreSQL runs in Docker Compose, and the backend and frontend run with the development command above. There is no live application URL or production hosting procedure to provide.
+
 ## Environment variables
+
+Docker Compose (root `.env`):
+
+- POSTGRES_USER
+- POSTGRES_PASSWORD
+- POSTGRES_DB
 
 Backend environment variable names (set values in `backend\.env`; do not commit or submit that file):
 

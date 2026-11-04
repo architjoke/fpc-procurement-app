@@ -1,7 +1,7 @@
-# Farmers Payment App
-
 Repository URL: https://github.com/architjoke/fpc-procurement-app
 Live app URL: local only, not deployed; run locally via Docker Compose + Vite + Express.
+
+# Farmers Payment App — Technical Design Document
 
 ## 1) Architecture
 
@@ -13,7 +13,7 @@ The app is split into a plain Express + TypeScript backend and a Vite + React fr
 | 360px mobile flow   |         | TypeScript / Dexie     |
 +----------+----------+         +-----------+------------+
            |                                  |
-           | HTTPS / JSON API                | IndexedDB queue
+           | HTTP(S) / JSON API              | IndexedDB queue
            v                                  v
 +---------------------+         +------------------------+
 | Express API         | <----> | PostgreSQL (Prisma)    |
@@ -23,7 +23,29 @@ The app is split into a plain Express + TypeScript backend and a Vite + React fr
                                 +------------------------+
 ```
 
-## 2) Data model summary
+### Why this architecture
+
+- A React/Vite browser client supports the operator and manager screens without requiring separate applications.
+- The Express API centralizes authentication, role and centre scoping, business rules, OCR parsing, sync validation, and payment-run transitions.
+- PostgreSQL stores related procurement, price, review, payment, and audit records; Prisma provides the schema and migration workflow.
+- Dexie keeps queued purchase data in the browser so operators can capture purchases without a network connection.
+- The OCR provider boundary supports the configured OCR.space service and a mock provider for local testing.
+
+## 2) UI and design decisions
+
+- **Operator flow:** Find Farmer, a step-by-step purchase wizard, and purchase confirmation/SMS preview keep the collection workflow focused on one task at a time. The wizard is designed for a 360-pixel mobile viewport and surfaces the calculated purchase values for confirmation.
+- **Visual hierarchy:** The requested warm off-white base (`#FAFAF7`), dark green accent (`#1B5E20`), amber flagged state (`#F59E0B`), and large numeric values distinguish routine actions and important weights or amounts.
+- **Manager screens:** Dashboard summarizes activity; Price Board supports rate management; Flagged Review gives exceptions a dedicated review flow; Payment Runs groups approval and export history. These screens map to the manager tasks in the brief.
+- **Login:** The login page uses a lazily loaded Three.js background so the visual treatment does not need to load with the rest of the app.
+- **Feedback and resilience:** Loading, empty, and error messages communicate screen state; the offline/sync indicator makes queued work visible rather than implying it has already synchronized.
+
+Representative manager screens from the local application:
+
+![Manager price board](screenshots/manager-price-board.png)
+
+![Manager payment runs](screenshots/manager-payment-runs.png)
+
+## 3) Data model summary
 
 - centres
 - farmers
@@ -39,7 +61,7 @@ The app is split into a plain Express + TypeScript backend and a Vite + React fr
 - sms_outbox
 - ocr_jobs
 
-## 3) API contract
+## 4) API contract
 
 - `POST /api/v1/auth/login`
 - `POST /api/v1/auth/refresh`
@@ -64,7 +86,7 @@ The app is split into a plain Express + TypeScript backend and a Vite + React fr
 - `GET /api/v1/sms/:purchaseId`
 - `GET /api/v1/dashboard/summary`
 
-## 4) Business rules contract
+## 5) Business rules contract
 
 - Net weight = `gross - tare`.
 - Moisture deduction applies to full percentage points above 12%.
@@ -85,9 +107,9 @@ The app is split into a plain Express + TypeScript backend and a Vite + React fr
 | `REPEATED_FARMER`   | Same farmer has a purchase in the previous 60 minutes.                                                 | Persist as `FLAGGED`; do not cancel or overwrite.         |
 | `MOISTURE_VARIANCE` | At least five same-centre/day readings vary by less than 0.5 percentage points.                        | Persist as `FLAGGED`; exact 0.5 does not trigger.         |
 
-Moisture comparisons use UTC calendar days and use the purchase device timestamp when present; older purchases without a device timestamp fall back to creation time. Managers must provide a reason when approving or rejecting a flagged purchase. Approval changes `FLAGGED` to `APPROVED`; rejection changes it to `REJECTED`.
+**ASSUMPTION — Anomaly date handling:** Moisture comparisons use UTC calendar days and use the purchase device timestamp when present; older purchases without a device timestamp fall back to creation time. Managers must provide a reason when approving or rejecting a flagged purchase. Approval changes `FLAGGED` to `APPROVED`; rejection changes it to `REJECTED`.
 
-## 5) OCR flow
+## 6) OCR flow
 
 ```text
 Operator uploads image -> multer validation -> provider factory -> raw text parse -> parseOcrText()
@@ -101,7 +123,7 @@ Notes:
 - Parsed values are stored in `ocr_jobs`, including raw text, confidence, and `purchase_id` once linked.
 - If the operator enters values that differ from OCR without explicit reconciliation, creation fails with `OCR_MISMATCH`.
 
-## 6) Offline sync sequence diagram
+## 7) Offline sync sequence diagram
 
 ```text
 Operator -> Frontend Dexie: queue purchase payload
@@ -116,9 +138,9 @@ Frontend -> Dexie: remove accepted rows; keep retryable queue entries for reject
 
 ### Retry policy choice
 
-The project adopts a retryable queue policy: failed sync entries stay `QUEUED` with `lastError` preserved unless the failure is a permanent validation issue that the backend can never recover from. This preserves the TDD contract and prevents silent data loss while waiting for connectivity or a later resubmission.
+**ASSUMPTION — Retry policy:** Failed sync entries stay `QUEUED` with `lastError` preserved unless the failure is a permanent validation issue that the backend can never recover from. This preserves the TDD contract and prevents silent data loss while waiting for connectivity or a later resubmission.
 
-## 7) Marathi SMS slip contract
+## 8) Marathi SMS slip contract
 
 The exact template is:
 
@@ -126,15 +148,18 @@ The exact template is:
 
 The mock SMS gateway stores exactly one log row per non-flagged purchase in `sms_outbox` using the unique `purchase_id` constraint. `GET /api/v1/sms/:purchaseId` returns the stored slip preview for the operator’s centre. Flagged purchases do not produce slips; approval does not retroactively send one.
 
-## 8) Key assumptions and ambiguity notes
+## 9) Assumptions and constraints
 
-- Kamal Shinde rounding ambiguity: the business rule states net weight is rounded to one decimal after moisture deduction; the project uses `Math.round(value * 10) / 10`, which is consistent with the canonical test case and accepted as the rule.
-- Purchase approval: non-flagged purchases are automatically approved; flagged purchases require a manager decision.
-- SMS timing for flagged purchases: flagged purchases do not generate slips, even after approval; TDD explicitly documents this and the app follows it.
-- Device secret handling: both server and client treat device keys as temporary secrets returned at login and store only the SHA-256 hash on the server.
-- No Aadhaar field exists anywhere in the schema or app contract; DPDP minimum-data principle is respected.
+All interpretations not directly specified in the brief are labeled **ASSUMPTION** below. Technology and implementation descriptions elsewhere in this document describe the current project, not additional client requirements.
 
-## 9) What we cut
+- **ASSUMPTION — Kamal Shinde rounding ambiguity:** Net weight is rounded to one decimal place after moisture deduction using `Math.round(value * 10) / 10`, consistent with the canonical test case.
+- **ASSUMPTION — Purchase approval:** Non-flagged purchases are automatically approved; flagged purchases require a manager decision.
+- **ASSUMPTION — SMS timing for flagged purchases:** Flagged purchases do not generate slips, and approval does not send one retroactively.
+- **ASSUMPTION — Device secret lifecycle:** Device keys are temporary secrets returned at login; only the SHA-256 hash is stored on the server.
+- **ASSUMPTION — Price effective-date interpretation:** The API treats a crop/grade/effective-date combination as unique and rejects a duplicate for that date.
+- **CONSTRAINT — Farmer privacy:** No Aadhaar field is included in the schema or app contract.
+
+## 10) What we cut
 
 The MVP intentionally excludes deeper operational features not needed for the client brief, including:
 
@@ -143,7 +168,7 @@ The MVP intentionally excludes deeper operational features not needed for the cl
 - advanced analytics beyond the daily summary dashboard
 - deep procurement forecasting or external bank integration beyond a mock CSV export
 
-## 10) What we'd build next
+## 11) What we'd build next
 
 - full farmer/member onboarding workflow with consent capture audit history
 - end-to-end mobile app packaging with real OCR provider and push/pull sync service

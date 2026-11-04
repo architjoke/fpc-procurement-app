@@ -6,9 +6,9 @@ services:
     ports:
       - '5433:5432'
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: farmers_payment_app
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env file or environment}
+      POSTGRES_DB: ${POSTGRES_DB:-farmers_payment_app}
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

@@ -14,11 +14,11 @@ Offline-first procurement and payment MVP for a farmer producer company in Mahar
 
 Prerequisites: Node.js 20+, npm, and Docker Desktop with Docker Compose.
 
-1. Start PostgreSQL:
+1. Configure local environment: create a root `.env` file with local values for `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`. Create `backend\.env` from `backend\.env.example` and set `DATABASE_URL` to use the same credentials and PostgreSQL port `5433`, plus the required backend environment variables. Do not commit `.env` files.
+2. Start PostgreSQL:
    ```powershell
    docker compose up -d postgres
    ```
-2. Create `backend\.env` from `backend\.env.example` if it does not exist, then set the required local environment variables. Do not commit `.env` files.
 3. Install dependencies:
    ```powershell
    npm run install:all

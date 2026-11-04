@@ -1723,9 +1723,9 @@ describe('API flows', () => {
               id: purchase.id,
               amountPaise: purchase.amountPaise,
               farmer: {
-                name: 'Kamal Pawar',
-                bankAccount: '9876543210',
-                bankIfsc: 'SBIN0004321',
+                name: 'Test Farmer',
+                bankAccount: '0000000000',
+                bankIfsc: 'TEST0000000',
               },
             },
           },
@@ -1741,7 +1741,7 @@ describe('API flows', () => {
 
     const exported = await request(app).get('/api/v1/payment-runs/run-e2e/export').set(headers);
     expect(exported.status).toBe(200);
-    expect(exported.text).toContain('"Kamal Pawar","9876543210","SBIN0004321",4030350');
+    expect(exported.text).toContain('"Test Farmer","0000000000","TEST0000000",4030350');
     expect(mockedPrisma.purchase.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: 'PAID' } }),
     );
