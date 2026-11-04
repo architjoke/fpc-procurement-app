@@ -9,7 +9,7 @@ Run on 2026-11-04 against the local Docker Compose PostgreSQL database and Vite/
 - [x] **PASS — Daily price board:** manager price-board screen loaded current rates, added a scheduled rate, updated an existing entry, and displayed the API’s 409 duplicate-date error. The same price-board API supplies rates to all centres. Evidence: live browser check and daily price-board API/business-rule tests.
 - [x] **PASS — Payment run:** non-flagged purchases are automatically marked `APPROVED` and appear in the manager payment-eligible list; live API verification created a run from a normal purchase, approved it, exported CSV (200), then received 409 on a second export.
 - [x] **PASS — Roles and access control:** operator and manager demo logins both succeeded; route guards and API role/centre scopes enforce access. Evidence: live browser logins and route/middleware review.
-- [ ] **PARTIAL — OCR and anomaly review:** OCR provider, mismatch checks, anomaly rules, and flagged review are implemented and covered by tests. The browser purchase was completed without OCR, and a live OCR.space scan was not run because no OCR API key is configured; deeper anomaly analytics beyond flagged review are out of scope.
+- [ ] **PARTIAL — OCR and anomaly review:** On 2026-11-04, a synthetic receipt image sent through the authenticated local OCR endpoint to OCR.space returned HTTP 200, parsed 125 kg and 13% moisture, and reported 0.9 confidence. OCR mismatch checks, anomaly rules, and flagged review are also covered by automated tests. The purchase wizard's visual confirmation/reconciliation flow was not manually completed with this real-provider result; deeper anomaly analytics beyond flagged review are out of scope.
 - [ ] **PARTIAL — Offline sync:** HMAC signing, replay/timestamp checks, and retryable queue handling are implemented; transient failed results remain queued with `lastError`. Automated backend tests and code review cover the sync contract, but a browser offline/reconnect retry was not exercised in this run.
 - [x] **PASS — Marathi SMS:** live purchase confirmation displayed the Marathi slip with farmer, crop, weights, moisture, rate, amount, and centre; SMS template/idempotency tests pass.
 
@@ -17,7 +17,7 @@ Run on 2026-11-04 against the local Docker Compose PostgreSQL database and Vite/
 
 - [x] **PASS — Login:** lazy-loaded background and role-based login tested in browser for operator and manager.
 - [x] **PASS — Operator: Find Farmer:** seeded farmer list loaded and was usable in browser.
-- [ ] **PARTIAL — Operator: New Purchase:** four-step purchase flow saved successfully in browser; OCR upload/reconciliation was not exercised with a real OCR provider.
+- [ ] **PARTIAL — Operator: New Purchase:** four-step purchase flow saved successfully in browser; real OCR.space provider parsing was verified through the authenticated API, but the wizard's image confirmation/reconciliation was not manually completed.
 - [ ] **PARTIAL — Operator: Purchase Detail:** purchase confirmation and SMS preview were exercised; the standalone purchase-detail route was not separately smoke-tested.
 - [x] **PASS — Manager: Price Board:** current/scheduled entries, add, edit, refresh, loading/error/empty states are implemented; live browser checks covered add, edit, and duplicate-rate handling.
 - [x] **PASS — Manager: Flagged Review:** manager route loaded and showed its empty state; approval behavior was verified in the live API smoke test.
@@ -40,6 +40,7 @@ Run on 2026-11-04 against the local Docker Compose PostgreSQL database and Vite/
 - `npm run dev`: backend and frontend started successfully.
 - Browser: operator login, farmer search, multi-step purchase, and Marathi SMS preview passed; manager login, flagged-review empty state, and payment-run history loaded.
 - Browser manager screens: dashboard loaded centre metrics; price board added a future rate, updated an existing rate, and surfaced the duplicate-rate conflict.
+- Real OCR provider: a generated, non-personal receipt image was processed by OCR.space through the authenticated API; the response parsed weight 125 kg and moisture 13% with confidence 0.9. Raw provider text and API credentials were not recorded.
 - Workflow verification: a successful non-flagged purchase was automatically marked `APPROVED`, appeared in the eligible list, and completed through payment-run approval, CSV export, and duplicate-export rejection.
 - Responsive browser check: Find Farmer, all purchase wizard steps, and the manager Dashboard, Price Board, Flagged Review, and Payment Runs had no horizontal overflow at 360 CSS pixels.
 - API smoke: flagged repeat purchase, manager approval, payment-run creation/approval, first CSV export (200), and re-export rejection (409) passed.
@@ -55,7 +56,7 @@ Run on 2026-11-04 against the local Docker Compose PostgreSQL database and Vite/
 
 ## Remaining submission gaps
 
-- Configure OCR.space credentials and run a real provider scan before claiming live OCR verification.
+- Manually complete the purchase wizard's OCR photo review/confirmation and mismatch-reconciliation flow using a real-provider result; the provider itself was verified through the authenticated API.
 - Exercise offline capture/retry in a browser with network interruption.
 - Complete responsive checks for every route at 360 pixels.
 - The app is local-only and not deployed; no live app URL is available.

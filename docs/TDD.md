@@ -122,6 +122,7 @@ Notes:
 - `OCR_PROVIDER=mock` switches to the in-memory mock provider; production uses OCR.space.
 - Parsed values are stored in `ocr_jobs`, including raw text, confidence, and `purchase_id` once linked.
 - If the operator enters values that differ from OCR without explicit reconciliation, creation fails with `OCR_MISMATCH`.
+- **Verification:** On 2026-11-04, a synthetic receipt image was sent through the authenticated local OCR endpoint to OCR.space. It returned HTTP 200, extracted 125 kg and 13% moisture, and reported 0.9 confidence. This verifies provider connectivity and parsing for a test image, not all receipt/photo conditions.
 
 ## 7) Offline sync sequence diagram
 
